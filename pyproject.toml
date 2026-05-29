@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "unblock_requests"
+dynamic = ["version"]
+description = "A requests.Session subclass that bypasses Cloudflare via curl_cffi, FlareSolverr, or the Wayback Machine"
+requires-python = ">=3.9"
+dependencies = ["requests>=2.28"]
+
+[project.optional-dependencies]
+stealth = ["curl-cffi"]
+test = ["pytest"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["unblock_requests*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "unblock_requests.version.__version__"}
