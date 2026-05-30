@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0a2](https://github.com/TigreGotico/unblock_requests/tree/0.2.0a2) (2026-05-30)
+
+[Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.2.0a1...0.2.0a2)
+
+**Merged pull requests:**
+
+- Add browserless transport mode [\#10](https://github.com/TigreGotico/unblock_requests/pull/10) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [0.2.0a1](https://github.com/TigreGotico/unblock_requests/tree/0.2.0a1) (2026-05-30)
 
 [Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.1.0...0.2.0a1)
