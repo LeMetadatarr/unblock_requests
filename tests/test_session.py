@@ -3,7 +3,7 @@ import os
 
 import requests
 
-from unblock_requests import CloudflareSession, is_challenge, wayback_raw_url
+from unblock_requests import CloudflareSession, is_blocked, is_challenge, wayback_raw_url
 from unblock_requests.session import _full_url, _make_response, _url_variants, _flaresolverr_extract
 
 
@@ -134,3 +134,26 @@ def test_fallback_flag_keeps_curl_cffi_mode(monkeypatch):
     monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_URL", "http://x:8191")
     monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_FALLBACK", "1")
     assert CloudflareSession()._resolved_mode() == "curl_cffi"
+
+
+def test_is_blocked_positive():
+    from unblock_requests import is_blocked
+    assert is_blocked("<html><head><title>The Vaults of Erowid : 403 - Blocked</title></head></html>")
+    assert is_blocked("<title>Access Denied</title><body>nope</body>")
+
+
+def test_is_blocked_negative():
+    from unblock_requests import is_blocked
+    assert not is_blocked("<html><head><title>Jennifer Aniston</title></head><body>" + ("real content "*500) + "</body></html>")
+    assert not is_blocked("")
+
+
+def test_softblock_200_escalates_to_flaresolverr(monkeypatch):
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi", flaresolverr_url="http://localhost:8191", flaresolverr_fallback=True)
+    blocked = S._make_response("http://t/", content=b"<title>403 - Blocked</title>", status=200)
+    good = S._make_response("http://t/", content=b"<html>the real page</html>", status=200)
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: blocked)
+    monkeypatch.setattr(s, "_via_flaresolverr", lambda url, proxy=None: good)
+    r = s.get("http://t/")
+    assert r.status_code == 200 and b"real page" in r.content
