@@ -33,6 +33,32 @@ def is_challenge(text: str) -> bool:
             or "challenge-platform" in head or "cf_chl_opt" in head)
 
 
+_BLOCK_TITLE_MARKERS = (
+    "access denied", "403 forbidden", "403 - blocked", "error 403",
+    "you have been blocked", "request blocked", "attention required",
+    "verify you are human", "permission denied", "- 403",
+)
+
+
+def _page_title(text: str) -> str:
+    m = re.search(r"<title[^>]*>(.*?)</title>", text or "", re.I | re.S)
+    return (m.group(1) if m else "").strip().lower()
+
+
+def is_blocked(text: str) -> bool:
+    """Detect a soft block: an access-denied / "403"-style page served with a
+    normal HTTP 200 body (so neither raise_for_status nor is_challenge catch it).
+    Conservative — matches a block phrase in the <title>, or in the head of a
+    short body, to avoid false positives on real content."""
+    if not text:
+        return False
+    title = _page_title(text)
+    if any(m in title for m in _BLOCK_TITLE_MARKERS):
+        return True
+    head = text[:2000].lower()
+    return len(text) < 4000 and any(m in head for m in _BLOCK_TITLE_MARKERS)
+
+
 def _truthy(value: Optional[str]) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -179,7 +205,10 @@ class CloudflareSession(requests.Session):
         env = self._env("TRANSPORT").lower()
         if env:
             return env
-        if self._fs_url():
+        # A solver URL normally selects flaresolverr mode — UNLESS the fallback
+        # flag is set, in which case the URL is escalation-only and the fast
+        # curl_cffi path stays the default.
+        if self._fs_url() and not self._flaresolverr_fallback_flag():
             return "flaresolverr"
         return "curl_cffi"
 
@@ -188,16 +217,17 @@ class CloudflareSession(requests.Session):
             return self.wayback_fallback
         return _truthy(self._env("WAYBACK_FALLBACK"))
 
-    def _do_flaresolverr_fallback(self) -> bool:
-        """Opt-in (env ``<PREFIX>_FLARESOLVERR_FALLBACK``): when a fast direct
-        fetch is blocked (challenge / 403 / 503), escalate that one request to a
-        FlareSolverr solve — keeping the happy path on fast curl_cffi. Needs a
-        solver URL to be configured."""
-        if not self._fs_url():
-            return False
+    def _flaresolverr_fallback_flag(self) -> bool:
+        """The escalate-on-block opt-in (kwarg or ``<PREFIX>_FLARESOLVERR_FALLBACK``
+        env), independent of whether a solver URL is configured."""
         if self.flaresolverr_fallback is not None:
             return self.flaresolverr_fallback
         return _truthy(self._env("FLARESOLVERR_FALLBACK"))
+
+    def _do_flaresolverr_fallback(self) -> bool:
+        """Whether a blocked GET (challenge / 403 / 503) should escalate to a
+        one-off FlareSolverr solve — needs both the flag and a solver URL."""
+        return bool(self._fs_url()) and self._flaresolverr_fallback_flag()
 
     def _proxy_on_429(self) -> bool:
         """Opt-in (env ``<PREFIX>_PROXY_ON_429``): on a rate-limit, retry through
@@ -311,15 +341,15 @@ class CloudflareSession(requests.Session):
             # (opt-in), keeping the happy path fast; a served challenge then
             # falls through to the Wayback fallback.
             if is_get and mode != "flaresolverr" \
-                    and (resp.status_code in (403, 503) or is_challenge(resp.text)):
+                    and (resp.status_code in (403, 503) or is_challenge(resp.text) or is_blocked(resp.text)):
                 if self._do_flaresolverr_fallback():
                     try:
                         solved = self._via_flaresolverr(full, proxy=self._proxy_url(kwargs))
-                        if not is_challenge(solved.text):
+                        if not is_challenge(solved.text) and not is_blocked(solved.text):
                             return solved
                     except Exception:
                         pass
-                if is_challenge(resp.text):
+                if is_challenge(resp.text) or is_blocked(resp.text):
                     raise RuntimeError("Cloudflare challenge served")
             # rate-limited → optionally retry through rotating proxies (opt-in)
             if resp.status_code == 429 and self._proxy_on_429():
