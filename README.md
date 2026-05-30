@@ -54,11 +54,32 @@ session = RotatingProxySession(
 session.get(url)   # rotates IP + solves Cloudflare
 ```
 
+### Auto-rotate proxies on rate-limit (HTTP 429)
+
+`CloudflareSession` can transparently fall back to rotating proxies **only when a
+request is rate-limited** (HTTP 429) — normal traffic stays direct/fast. It's
+**opt-in** via env (off by default; needs the `[anon]` extra):
+
+```bash
+pip install unblock_requests[anon]            # pulls anon_requests
+
+export UNBLOCK_REQUESTS_PROXY_ON_429=1        # enable the fallback
+export UNBLOCK_REQUESTS_PROXY_RETRIES=5       # rotated IPs to try (default 5)
+# per-client override: use the session's env_prefix, e.g. PYDISCOGS_PROXY_ON_429=1
+```
+
+On a 429 the session retries through `anon_requests` rotating proxies (a fresh
+source IP per attempt) and returns the first non-429 response; if `anon_requests`
+is absent or no proxy succeeds, the original 429 is returned unchanged. This is
+the standard way every `clients/` scraper handles rate limits — no per-repo code,
+since they all transit `CloudflareSession`.
+
 ## Install
 
 ```bash
 pip install unblock_requests
 pip install unblock_requests[stealth]   # adds curl_cffi (recommended)
+pip install unblock_requests[anon]      # adds anon_requests (proxy-on-429)
 ```
 
 ## Notes / limits

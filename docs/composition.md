@@ -66,3 +66,24 @@ other owns *how* to fetch. Clean separation, full composition.
 Neither depends on the other. Use `unblock_requests` by itself for plain
 Cloudflare bypass, or `anon_requests` by itself for rotation with stock
 `requests`. The `session_factory` default is `requests.Session`.
+
+## Built-in: auto-rotate on rate-limit (HTTP 429)
+
+You don't have to wire the composition yourself for the common case — rate
+limiting. `CloudflareSession` does it on demand, **opt-in via env** (off by
+default; install the `[anon]` extra):
+
+```bash
+pip install unblock_requests[anon]
+export UNBLOCK_REQUESTS_PROXY_ON_429=1     # or <PREFIX>_PROXY_ON_429 per client
+export UNBLOCK_REQUESTS_PROXY_RETRIES=5    # rotated IPs to try (default 5)
+```
+
+When a request comes back `429`, the session retries it through an
+`anon_requests` `RotatingProxySession` (a new source IP per attempt) and returns
+the first non-429 response. If `anon_requests` isn't installed or every proxy is
+also limited, the original `429` is returned unchanged — so enabling it can only
+help. Normal (non-429) traffic never touches the proxy pool, so there's no speed
+cost in the common path. Reads `<PREFIX>_PROXY_ON_429` / `<PREFIX>_PROXY_RETRIES`
+off the session's `env_prefix`, so each `clients/` scraper can be toggled
+independently.
