@@ -36,6 +36,29 @@ CloudflareSession(mode="wayback")                        # force the archive
 CloudflareSession(flaresolverr_url="http://host:8191", wayback_fallback=True)  # live, archive on failure
 ```
 
+### Escalate to the solver only when blocked (HTTP 403/503/challenge)
+
+Setting `flaresolverr_url` selects FlareSolverr mode, which routes **every**
+request through the headless-browser solve — correct for permanently-walled
+sites, but slow where the fast `curl_cffi` path already clears the check. The
+**`flaresolverr_fallback`** option keeps the happy path on `curl_cffi` and
+escalates *only* the requests that come back blocked (a Cloudflare challenge, or
+HTTP 403/503) to a one-off solve — then to Wayback if that also fails:
+
+```bash
+export PYDISCOGS_FLARESOLVERR_URL=http://host:8191    # solver to escalate to
+export PYDISCOGS_FLARESOLVERR_FALLBACK=1              # opt-in; default mode stays curl_cffi
+```
+
+```python
+CloudflareSession(flaresolverr_fallback=True, flaresolverr_url="http://host:8191")
+```
+
+This is the pre-emptive setting for scrapers that normally pass on TLS
+impersonation but should survive a site tightening its anti-bot without silently
+returning blocked pages. The fast path is unaffected; the solver is used per
+blocked request, not per request.
+
 ## Composing with anon_requests
 
 `unblock_requests` (anti-bot) and `anon_requests` (IP rotation) are orthogonal
