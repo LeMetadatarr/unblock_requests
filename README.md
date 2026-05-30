@@ -13,7 +13,7 @@ Because it subclasses `requests.Session` and only overrides `request()`, every
 ```python
 from unblock_requests import CloudflareSession        # alias: Session
 
-s = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191")
+s = CloudflareSession(flaresolverr_url="http://localhost:8191")
 html = s.get("https://www.progarchives.com/artist.asp?id=1").text   # solved live
 import requests; assert isinstance(s, requests.Session)              # True
 ```

@@ -11,7 +11,7 @@ Run::
 """
 from unblock_requests import CloudflareSession, is_challenge
 
-FLARESOLVERR = "http://192.168.1.116:8191"
+FLARESOLVERR = "http://localhost:8191"
 
 
 def main() -> None:

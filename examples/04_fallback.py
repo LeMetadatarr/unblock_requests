@@ -12,7 +12,7 @@ from unblock_requests import CloudflareSession
 
 def main() -> None:
     # Point at a FlareSolverr that may or may not be up; fall back to archive.
-    s = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191",
+    s = CloudflareSession(flaresolverr_url="http://localhost:8191",
                           wayback_fallback=True)
     print("primary mode:", s._resolved_mode(), "(+ wayback fallback)")
 

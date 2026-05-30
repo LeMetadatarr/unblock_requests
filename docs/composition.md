@@ -22,7 +22,7 @@ from unblock_requests import CloudflareSession         # anti-bot transport
 session = RotatingProxySession(
     proxy_type="socks5",
     session_factory=lambda: CloudflareSession(
-        flaresolverr_url="http://192.168.1.116:8191",
+        flaresolverr_url="http://localhost:8191",
     ),
 )
 
