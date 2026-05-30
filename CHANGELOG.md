@@ -1,25 +1,12 @@
 # Changelog
 
-## [0.1.0a1](https://github.com/TigreGotico/unblock_requests/tree/0.1.0a1) (2026-05-30)
+## [0.2.0a1](https://github.com/TigreGotico/unblock_requests/tree/0.2.0a1) (2026-05-30)
 
-[Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.0.1a3...0.1.0a1)
-
-**Merged pull requests:**
-
-- feat: flaresolverr\_fallback — escalate blocked GETs to the solver [\#6](https://github.com/TigreGotico/unblock_requests/pull/6) ([JarbasAl](https://github.com/JarbasAl))
-
-## [0.0.1a3](https://github.com/TigreGotico/unblock_requests/tree/0.0.1a3) (2026-05-29)
-
-[Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.0.1a2...0.0.1a3)
-
-## [0.0.1a2](https://github.com/TigreGotico/unblock_requests/tree/0.0.1a2) (2026-05-29)
-
-[Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/2a49289022bd7461e54304d78e15707c2ae28e8c...0.0.1a2)
+[Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.1.0...0.2.0a1)
 
 **Merged pull requests:**
 
-- ci: add standard gh-automations workflows [\#2](https://github.com/TigreGotico/unblock_requests/pull/2) ([JarbasAl](https://github.com/JarbasAl))
-- chore: Configure Renovate [\#1](https://github.com/TigreGotico/unblock_requests/pull/1) ([renovate[bot]](https://github.com/apps/renovate))
+- feat: is\_blocked\(\) soft-block detection + keep curl\_cffi on fallback [\#8](https://github.com/TigreGotico/unblock_requests/pull/8) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
