@@ -11,7 +11,7 @@ from unblock_requests import CloudflareSession
 
 def main() -> None:
     # It is a real requests.Session.
-    s = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191")
+    s = CloudflareSession(flaresolverr_url="http://localhost:8191")
     assert isinstance(s, requests.Session)
     print("mode:", s._resolved_mode())
     # r = s.get("https://www.progarchives.com/artist.asp?id=1")  # solved live
@@ -23,7 +23,7 @@ def main() -> None:
     print("wayback:", r.status_code, "GENESIS" in r.text)
 
     # Live first, archive on failure.
-    resilient = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191",
+    resilient = CloudflareSession(flaresolverr_url="http://localhost:8191",
                                   wayback_fallback=True)
     print("resilient mode:", resilient._resolved_mode())
 

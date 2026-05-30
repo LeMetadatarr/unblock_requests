@@ -1,4 +1,6 @@
 """Offline tests for CloudflareSession (no network)."""
+import os
+
 import requests
 
 from unblock_requests import CloudflareSession, is_challenge, wayback_raw_url
@@ -79,3 +81,40 @@ def test_proxy_url_selection():
     s.proxies = {"http": "http://5.6.7.8:3128"}
     assert s._proxy_url({}) == "http://5.6.7.8:3128"
     assert CloudflareSession()._proxy_url({}) is None
+
+
+def test_flaresolverr_fallback_resolution(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("UNBLOCK_REQUESTS"):
+            monkeypatch.delenv(k, raising=False)
+    # no solver URL -> never escalate, even if the flag is set
+    assert CloudflareSession()._do_flaresolverr_fallback() is False
+    assert CloudflareSession(flaresolverr_fallback=True)._do_flaresolverr_fallback() is False
+    # explicit URL + flag
+    s = CloudflareSession(flaresolverr_url="http://x:8191", flaresolverr_fallback=True)
+    assert s._do_flaresolverr_fallback() is True
+    # env-driven
+    monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_URL", "http://x:8191")
+    monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_FALLBACK", "1")
+    assert CloudflareSession()._do_flaresolverr_fallback() is True
+
+
+def test_blocked_get_escalates_to_flaresolverr(monkeypatch):
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi", flaresolverr_url="http://x:8191",
+                          flaresolverr_fallback=True)
+    blocked = S._make_response("http://t/", content=b"<html>Access denied</html>", status=403)
+    good = S._make_response("http://t/", content=b"<html>the real page is here</html>", status=200)
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: blocked)
+    monkeypatch.setattr(s, "_via_flaresolverr", lambda url, proxy=None: good)
+    r = s.get("http://t/")
+    assert r.status_code == 200 and b"real page" in r.content
+
+
+def test_blocked_get_without_fallback_returns_block(monkeypatch):
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi")  # fallback off, no solver
+    blocked = S._make_response("http://t/", content=b"<html>403 plain</html>", status=403)
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: blocked)
+    r = s.get("http://t/")
+    assert r.status_code == 403

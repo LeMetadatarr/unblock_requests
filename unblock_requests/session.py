@@ -123,22 +123,28 @@ class CloudflareSession(requests.Session):
                                  the environment, then auto (FlareSolverr if a
                                  URL is configured, else curl_cffi).
         flaresolverr_url:        FlareSolverr base URL (e.g.
-                                 ``"http://192.168.1.116:8191"``).
+                                 ``"http://localhost:8191"``).
         flaresolverr_timeout_ms: per-request solve budget (default 60000).
         wayback_fallback:        fall back to the Wayback Machine when a live
                                  GET is blocked. ``None`` → read the env flag.
+        flaresolverr_fallback:   keep the fast (curl_cffi) path, but escalate a
+                                 blocked GET (challenge / 403 / 503) to a one-off
+                                 FlareSolverr solve. Needs ``flaresolverr_url``.
+                                 ``None`` → read the env flag.
         impersonate:             curl_cffi browser target (default ``"chrome"``).
         env_prefix:              namespace for the env fallbacks (default
                                  ``"UNBLOCK_REQUESTS"``): ``<PREFIX>_TRANSPORT``,
                                  ``<PREFIX>_FLARESOLVERR_URL``,
                                  ``<PREFIX>_FLARESOLVERR_TIMEOUT``,
-                                 ``<PREFIX>_WAYBACK_FALLBACK``.
+                                 ``<PREFIX>_WAYBACK_FALLBACK``,
+                                 ``<PREFIX>_FLARESOLVERR_FALLBACK``.
     """
 
     def __init__(self, *, mode: Optional[str] = None,
                  flaresolverr_url: Optional[str] = None,
                  flaresolverr_timeout_ms: Optional[int] = None,
                  wayback_fallback: Optional[bool] = None,
+                 flaresolverr_fallback: Optional[bool] = None,
                  impersonate: str = "chrome",
                  env_prefix: str = "UNBLOCK_REQUESTS") -> None:
         super().__init__()
@@ -148,6 +154,7 @@ class CloudflareSession(requests.Session):
         self.flaresolverr_url = flaresolverr_url
         self.flaresolverr_timeout_ms = flaresolverr_timeout_ms
         self.wayback_fallback = wayback_fallback
+        self.flaresolverr_fallback = flaresolverr_fallback
         self.impersonate = impersonate
         self.env_prefix = env_prefix
         self.headers.update(_DEFAULT_HEADERS)
@@ -180,6 +187,60 @@ class CloudflareSession(requests.Session):
         if self.wayback_fallback is not None:
             return self.wayback_fallback
         return _truthy(self._env("WAYBACK_FALLBACK"))
+
+    def _do_flaresolverr_fallback(self) -> bool:
+        """Opt-in (env ``<PREFIX>_FLARESOLVERR_FALLBACK``): when a fast direct
+        fetch is blocked (challenge / 403 / 503), escalate that one request to a
+        FlareSolverr solve — keeping the happy path on fast curl_cffi. Needs a
+        solver URL to be configured."""
+        if not self._fs_url():
+            return False
+        if self.flaresolverr_fallback is not None:
+            return self.flaresolverr_fallback
+        return _truthy(self._env("FLARESOLVERR_FALLBACK"))
+
+    def _proxy_on_429(self) -> bool:
+        """Opt-in (env ``<PREFIX>_PROXY_ON_429``): on a rate-limit, retry through
+        rotating proxies via anon_requests."""
+        return _truthy(self._env("PROXY_ON_429"))
+
+    def _via_proxies(self, method: str, url: str, **kwargs) -> Optional[Response]:
+        """Retry a rate-limited request through rotating proxies (anon_requests).
+
+        Each attempt rotates the source IP. Returns the first non-429 response,
+        or ``None`` if anon_requests is unavailable / no proxy succeeds (caller
+        then keeps the original 429). Uses plain ``requests`` sessions behind the
+        proxies (no recursion back into CloudflareSession).
+        """
+        try:
+            from anon_requests import RotatingProxySession, ProxyType
+        except ImportError:
+            return None
+        import requests as _rq
+        try:
+            tries = int(self._env("PROXY_RETRIES") or "5")
+        except ValueError:
+            tries = 5
+        try:
+            rps = RotatingProxySession(proxy_type=ProxyType.SOCKS5, validate=True,
+                                       session_factory=_rq.Session)
+        except Exception:
+            return None
+        try:
+            rps.headers.update(self.headers)
+            for _ in range(max(1, tries)):
+                try:
+                    r = rps.request(method, url, **kwargs)
+                except Exception:
+                    continue
+                if r.status_code != 429:
+                    return r
+        finally:
+            try:
+                rps.close()
+            except Exception:
+                pass
+        return None
 
     # -- per-mode fetchers (all return requests.Response) ------------------
 
@@ -246,10 +307,25 @@ class CloudflareSession(requests.Session):
                     resp = super().request(method, url, **kwargs)  # curl_cffi absent
             else:
                 resp = super().request(method, url, **kwargs)
-            # treat a served challenge as a failure so the fallback can fire
-            if is_get and (resp.status_code in (403, 503) or is_challenge(resp.text)) \
-                    and is_challenge(resp.text):
-                raise RuntimeError("Cloudflare challenge served")
+            # a blocked GET (challenge / 403 / 503) can escalate to the solver
+            # (opt-in), keeping the happy path fast; a served challenge then
+            # falls through to the Wayback fallback.
+            if is_get and mode != "flaresolverr" \
+                    and (resp.status_code in (403, 503) or is_challenge(resp.text)):
+                if self._do_flaresolverr_fallback():
+                    try:
+                        solved = self._via_flaresolverr(full, proxy=self._proxy_url(kwargs))
+                        if not is_challenge(solved.text):
+                            return solved
+                    except Exception:
+                        pass
+                if is_challenge(resp.text):
+                    raise RuntimeError("Cloudflare challenge served")
+            # rate-limited → optionally retry through rotating proxies (opt-in)
+            if resp.status_code == 429 and self._proxy_on_429():
+                proxied = self._via_proxies(method, url, **kwargs)
+                if proxied is not None:
+                    return proxied
             return resp
         except Exception:
             if is_get and self._do_wayback_fallback():

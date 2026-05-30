@@ -37,9 +37,9 @@ docker run -d --name flaresolverr -p 8191:8191 \
 ```
 
 ```python
-s = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191")
+s = CloudflareSession(flaresolverr_url="http://localhost:8191")
 # auto-selected because the URL is set; or be explicit:
-s = CloudflareSession(mode="flaresolverr", flaresolverr_url="http://192.168.1.116:8191",
+s = CloudflareSession(mode="flaresolverr", flaresolverr_url="http://localhost:8191",
                       flaresolverr_timeout_ms=90000)
 r = s.get(url)        # r.text is the fully-rendered page
 ```
@@ -66,7 +66,7 @@ read-only/catalogue data, demos, CI, or sites you simply can't reach.
 ## `wayback_fallback` — live first, archive on failure
 
 ```python
-s = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191",
+s = CloudflareSession(flaresolverr_url="http://localhost:8191",
                       wayback_fallback=True)
 ```
 

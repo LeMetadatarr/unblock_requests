@@ -41,13 +41,13 @@ s = CloudflareSession()
 
 # Solve the JS challenge live via a FlareSolverr box (best — fresh data).
 # Setting the URL alone selects this mode.
-s = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191")
+s = CloudflareSession(flaresolverr_url="http://localhost:8191")
 
 # No live request at all — read the Internet Archive (stale, zero infra).
 s = CloudflareSession(mode="wayback")
 
 # Try live first, fall back to the archive if blocked.
-s = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191",
+s = CloudflareSession(flaresolverr_url="http://localhost:8191",
                       wayback_fallback=True)
 ```
 
@@ -58,7 +58,7 @@ See [transports.md](transports.md) for what each one does and when to reach for 
 ```python
 from unblock_requests import CloudflareSession
 
-s = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191")
+s = CloudflareSession(flaresolverr_url="http://localhost:8191")
 r = s.get("https://www.progarchives.com/artist.asp?id=1")
 print(r.status_code)            # 200
 print("GENESIS" in r.text)      # True — challenge solved, real HTML
@@ -76,7 +76,7 @@ print("GENESIS" in s.get("https://www.progarchives.com/artist.asp?id=1").text)
 Every kwarg has an env fallback under a prefix (default `UNBLOCK_REQUESTS`):
 
 ```bash
-export UNBLOCK_REQUESTS_FLARESOLVERR_URL=http://192.168.1.116:8191
+export UNBLOCK_REQUESTS_FLARESOLVERR_URL=http://localhost:8191
 export UNBLOCK_REQUESTS_TRANSPORT=wayback        # or curl_cffi / requests / flaresolverr
 export UNBLOCK_REQUESTS_WAYBACK_FALLBACK=1
 ```
