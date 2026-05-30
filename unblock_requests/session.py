@@ -325,7 +325,11 @@ class CloudflareSession(requests.Session):
     def _via_browserless(self, url: str) -> Response:
         endpoint = (self._bl_url() or "http://localhost:3600").rstrip("/")
         timeout_ms = self._bl_timeout()
-        body = {"url": url, "gotoOptions": {"waitUntil": "networkidle2", "timeout": timeout_ms}}
+        # "networkidle2" never settles on ad/CF-heavy pages and 408s; default to
+        # "load" (still runs the page JS). Override per env <PREFIX>_BROWSERLESS_WAIT
+        # (e.g. "domcontentloaded" / "networkidle0").
+        wait = self._env("BROWSERLESS_WAIT") or "load"
+        body = {"url": url, "gotoOptions": {"waitUntil": wait, "timeout": timeout_ms}}
         resp = requests.post(f"{endpoint}/content", json=body, timeout=timeout_ms / 1000 + 30)
         resp.raise_for_status()
         return _make_response(url, content=resp.content)
