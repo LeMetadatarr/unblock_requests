@@ -14,11 +14,12 @@ def test_is_a_requests_session():
 
 
 def test_mode_resolution(monkeypatch):
-    for k in ("UNBLOCK_REQUESTS_TRANSPORT", "UNBLOCK_REQUESTS_FLARESOLVERR_URL", "UNBLOCK_REQUESTS_WAYBACK_FALLBACK"):
+    for k in ("UNBLOCK_REQUESTS_TRANSPORT", "UNBLOCK_REQUESTS_FLARESOLVERR_URL", "UNBLOCK_REQUESTS_BROWSERLESS_URL", "UNBLOCK_REQUESTS_WAYBACK_FALLBACK"):
         monkeypatch.delenv(k, raising=False)
     assert CloudflareSession()._resolved_mode() == "curl_cffi"
     assert CloudflareSession(mode="wayback")._resolved_mode() == "wayback"
     assert CloudflareSession(flaresolverr_url="http://x:8191")._resolved_mode() == "flaresolverr"
+    assert CloudflareSession(browserless_url="http://localhost:3600")._resolved_mode() == "browserless"
 
 
 def test_kwarg_beats_env(monkeypatch):
@@ -157,3 +158,31 @@ def test_softblock_200_escalates_to_flaresolverr(monkeypatch):
     monkeypatch.setattr(s, "_via_flaresolverr", lambda url, proxy=None: good)
     r = s.get("http://t/")
     assert r.status_code == 200 and b"real page" in r.content
+
+
+def test_browserless_mode_resolution(monkeypatch):
+    for k in ("UNBLOCK_REQUESTS_TRANSPORT", "UNBLOCK_REQUESTS_BROWSERLESS_URL"):
+        monkeypatch.delenv(k, raising=False)
+    s = CloudflareSession(browserless_url="http://localhost:3600")
+    assert s._resolved_mode() == "browserless"
+
+
+def test_browserless_fetch(monkeypatch):
+    import json
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="browserless")
+
+    # Mock requests.post to return fake rendered HTML
+    def mock_post(url, json=None, timeout=None):
+        resp = requests.Response()
+        resp.status_code = 200
+        resp._content = b"<html>rendered</html>"
+        resp.url = url
+        resp.headers = {"Content-Type": "text/html"}
+        return resp
+
+    monkeypatch.setattr("requests.post", mock_post)
+    r = s.get("http://t/")
+    assert r.status_code == 200
+    assert b"rendered" in r.content
+    assert "rendered" in r.text

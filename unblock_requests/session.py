@@ -10,7 +10,7 @@ from requests.models import PreparedRequest, Response
 from requests.structures import CaseInsensitiveDict
 
 _WAYBACK_AVAILABLE_API = "http://archive.org/wayback/available"
-_VALID_MODES = {"requests", "curl_cffi", "wayback", "flaresolverr"}
+_VALID_MODES = {"requests", "curl_cffi", "wayback", "flaresolverr", "browserless"}
 
 _DEFAULT_HEADERS = {
     "User-Agent": (
@@ -145,12 +145,15 @@ class CloudflareSession(requests.Session):
 
     Args:
         mode:                    ``"requests"`` / ``"curl_cffi"`` / ``"wayback"``
-                                 / ``"flaresolverr"``. ``None`` → resolve from
+                                 / ``"flaresolverr"`` / ``"browserless"``. ``None`` → resolve from
                                  the environment, then auto (FlareSolverr if a
-                                 URL is configured, else curl_cffi).
+                                 URL is configured, browserless if a URL is set, else curl_cffi).
         flaresolverr_url:        FlareSolverr base URL (e.g.
                                  ``"http://localhost:8191"``).
         flaresolverr_timeout_ms: per-request solve budget (default 60000).
+        browserless_url:         Browserless base URL (e.g.
+                                 ``"http://localhost:3600"``).
+        browserless_timeout_ms:  per-request render timeout (default 60000).
         wayback_fallback:        fall back to the Wayback Machine when a live
                                  GET is blocked. ``None`` → read the env flag.
         flaresolverr_fallback:   keep the fast (curl_cffi) path, but escalate a
@@ -162,6 +165,8 @@ class CloudflareSession(requests.Session):
                                  ``"UNBLOCK_REQUESTS"``): ``<PREFIX>_TRANSPORT``,
                                  ``<PREFIX>_FLARESOLVERR_URL``,
                                  ``<PREFIX>_FLARESOLVERR_TIMEOUT``,
+                                 ``<PREFIX>_BROWSERLESS_URL``,
+                                 ``<PREFIX>_BROWSERLESS_TIMEOUT``,
                                  ``<PREFIX>_WAYBACK_FALLBACK``,
                                  ``<PREFIX>_FLARESOLVERR_FALLBACK``.
     """
@@ -169,6 +174,8 @@ class CloudflareSession(requests.Session):
     def __init__(self, *, mode: Optional[str] = None,
                  flaresolverr_url: Optional[str] = None,
                  flaresolverr_timeout_ms: Optional[int] = None,
+                 browserless_url: Optional[str] = None,
+                 browserless_timeout_ms: Optional[int] = None,
                  wayback_fallback: Optional[bool] = None,
                  flaresolverr_fallback: Optional[bool] = None,
                  impersonate: str = "chrome",
@@ -179,6 +186,8 @@ class CloudflareSession(requests.Session):
         self.cf_mode = mode.lower() if mode else None
         self.flaresolverr_url = flaresolverr_url
         self.flaresolverr_timeout_ms = flaresolverr_timeout_ms
+        self.browserless_url = browserless_url
+        self.browserless_timeout_ms = browserless_timeout_ms
         self.wayback_fallback = wayback_fallback
         self.flaresolverr_fallback = flaresolverr_fallback
         self.impersonate = impersonate
@@ -199,6 +208,14 @@ class CloudflareSession(requests.Session):
             return self.flaresolverr_timeout_ms
         return int(self._env("FLARESOLVERR_TIMEOUT") or "60000")
 
+    def _bl_url(self) -> str:
+        return self.browserless_url or self._env("BROWSERLESS_URL")
+
+    def _bl_timeout(self) -> int:
+        if self.browserless_timeout_ms is not None:
+            return self.browserless_timeout_ms
+        return int(self._env("BROWSERLESS_TIMEOUT") or "60000")
+
     def _resolved_mode(self) -> str:
         if self.cf_mode:
             return self.cf_mode
@@ -210,6 +227,8 @@ class CloudflareSession(requests.Session):
         # curl_cffi path stays the default.
         if self._fs_url() and not self._flaresolverr_fallback_flag():
             return "flaresolverr"
+        if self._bl_url():
+            return "browserless"
         return "curl_cffi"
 
     def _do_wayback_fallback(self) -> bool:
@@ -303,6 +322,14 @@ class CloudflareSession(requests.Session):
         html = _flaresolverr_extract(resp.json())
         return _make_response(url, content=html.encode("utf-8"))
 
+    def _via_browserless(self, url: str) -> Response:
+        endpoint = (self._bl_url() or "http://localhost:3600").rstrip("/")
+        timeout_ms = self._bl_timeout()
+        body = {"url": url, "gotoOptions": {"waitUntil": "networkidle2", "timeout": timeout_ms}}
+        resp = requests.post(f"{endpoint}/content", json=body, timeout=timeout_ms / 1000 + 30)
+        resp.raise_for_status()
+        return _make_response(url, content=resp.content)
+
     def _proxy_url(self, kwargs: dict) -> Optional[str]:
         """A single proxy URL from per-request ``proxies=`` or ``self.proxies``."""
         proxies = kwargs.get("proxies") or self.proxies or {}
@@ -330,6 +357,8 @@ class CloudflareSession(requests.Session):
         try:
             if mode == "flaresolverr" and is_get:
                 resp = self._via_flaresolverr(full, proxy=self._proxy_url(kwargs))
+            elif mode == "browserless" and is_get:
+                resp = self._via_browserless(full)
             elif mode == "curl_cffi":
                 try:
                     resp = self._via_curl(method, url, **kwargs)

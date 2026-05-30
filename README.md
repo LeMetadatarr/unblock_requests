@@ -28,10 +28,12 @@ Pick with the `mode=` kwarg, or the `<PREFIX>_TRANSPORT` env var (default prefix
 | `curl_cffi` *(default)* | Chrome TLS impersonation (install the `stealth` extra). Clears the bot check on most networks. |
 | `requests` | Plain `requests`, no impersonation. |
 | `flaresolverr` | Proxy through a [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) headless browser that solves the JS challenge — **live** data. Selected automatically when `flaresolverr_url` is set. |
+| `browserless` | Headless-Chrome render for JS/SPA pages via [Browserless](https://www.browserless.io/) — returns fully rendered HTML. Selected when `browserless_url` is set. |
 | `wayback` | Read the latest Internet Archive snapshot — stale, but needs no infrastructure. |
 
 ```python
 CloudflareSession(flaresolverr_url="http://host:8191")   # solve live
+CloudflareSession(browserless_url="http://localhost:3600")  # render via Browserless
 CloudflareSession(mode="wayback")                        # force the archive
 CloudflareSession(flaresolverr_url="http://host:8191", wayback_fallback=True)  # live, archive on failure
 ```
