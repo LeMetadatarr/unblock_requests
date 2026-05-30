@@ -181,6 +181,49 @@ class CloudflareSession(requests.Session):
             return self.wayback_fallback
         return _truthy(self._env("WAYBACK_FALLBACK"))
 
+    def _proxy_on_429(self) -> bool:
+        """Opt-in (env ``<PREFIX>_PROXY_ON_429``): on a rate-limit, retry through
+        rotating proxies via anon_requests."""
+        return _truthy(self._env("PROXY_ON_429"))
+
+    def _via_proxies(self, method: str, url: str, **kwargs) -> Optional[Response]:
+        """Retry a rate-limited request through rotating proxies (anon_requests).
+
+        Each attempt rotates the source IP. Returns the first non-429 response,
+        or ``None`` if anon_requests is unavailable / no proxy succeeds (caller
+        then keeps the original 429). Uses plain ``requests`` sessions behind the
+        proxies (no recursion back into CloudflareSession).
+        """
+        try:
+            from anon_requests import RotatingProxySession, ProxyType
+        except ImportError:
+            return None
+        import requests as _rq
+        try:
+            tries = int(self._env("PROXY_RETRIES") or "5")
+        except ValueError:
+            tries = 5
+        try:
+            rps = RotatingProxySession(proxy_type=ProxyType.SOCKS5, validate=True,
+                                       session_factory=_rq.Session)
+        except Exception:
+            return None
+        try:
+            rps.headers.update(self.headers)
+            for _ in range(max(1, tries)):
+                try:
+                    r = rps.request(method, url, **kwargs)
+                except Exception:
+                    continue
+                if r.status_code != 429:
+                    return r
+        finally:
+            try:
+                rps.close()
+            except Exception:
+                pass
+        return None
+
     # -- per-mode fetchers (all return requests.Response) ------------------
 
     def _curl_session(self):
@@ -250,6 +293,11 @@ class CloudflareSession(requests.Session):
             if is_get and (resp.status_code in (403, 503) or is_challenge(resp.text)) \
                     and is_challenge(resp.text):
                 raise RuntimeError("Cloudflare challenge served")
+            # rate-limited → optionally retry through rotating proxies (opt-in)
+            if resp.status_code == 429 and self._proxy_on_429():
+                proxied = self._via_proxies(method, url, **kwargs)
+                if proxied is not None:
+                    return proxied
             return resp
         except Exception:
             if is_get and self._do_wayback_fallback():
