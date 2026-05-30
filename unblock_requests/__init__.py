@@ -28,6 +28,7 @@ Explicit kwargs always win over the environment. Setting ``flaresolverr_url``
 """
 from unblock_requests.session import (
     CloudflareSession,
+    is_blocked,
     is_challenge,
     wayback_html,
     wayback_raw_url,
@@ -40,6 +41,7 @@ Session = CloudflareSession
 __all__ = [
     "CloudflareSession",
     "Session",
+    "is_blocked",
     "is_challenge",
     "wayback_html",
     "wayback_raw_url",
