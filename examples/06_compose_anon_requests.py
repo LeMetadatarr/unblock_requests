@@ -21,7 +21,7 @@ from unblock_requests import CloudflareSession         # anti-bot transport
 session = RotatingProxySession(
     proxy_type="socks5",
     session_factory=lambda: CloudflareSession(
-        flaresolverr_url="http://192.168.1.116:8191"),
+        flaresolverr_url="http://localhost:8191"),
 )
 session.get(url)   # rotates IP + solves Cloudflare through that IP
 '''
@@ -29,7 +29,7 @@ session.get(url)   # rotates IP + solves Cloudflare through that IP
 
 def main() -> None:
     # The composition point: a zero-arg callable returning a requests.Session.
-    factory = lambda: CloudflareSession(flaresolverr_url="http://192.168.1.116:8191")
+    factory = lambda: CloudflareSession(flaresolverr_url="http://localhost:8191")
     inner = factory()
     import requests
     print("session_factory() ->", type(inner).__name__,

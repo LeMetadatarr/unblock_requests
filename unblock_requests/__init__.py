@@ -16,7 +16,7 @@ keeps working unchanged::
 
     from unblock_requests import CloudflareSession
 
-    s = CloudflareSession(flaresolverr_url="http://192.168.1.116:8191")
+    s = CloudflareSession(flaresolverr_url="http://localhost:8191")
     s.get("https://www.progarchives.com/artist.asp?id=1").text   # solved live
     s.headers["Referer"] = "..."                                  # inherited
     assert isinstance(s, requests.Session)                        # True
