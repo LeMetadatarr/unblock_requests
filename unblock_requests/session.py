@@ -179,7 +179,10 @@ class CloudflareSession(requests.Session):
         env = self._env("TRANSPORT").lower()
         if env:
             return env
-        if self._fs_url():
+        # A solver URL normally selects flaresolverr mode — UNLESS the fallback
+        # flag is set, in which case the URL is escalation-only and the fast
+        # curl_cffi path stays the default.
+        if self._fs_url() and not self._flaresolverr_fallback_flag():
             return "flaresolverr"
         return "curl_cffi"
 
@@ -188,16 +191,17 @@ class CloudflareSession(requests.Session):
             return self.wayback_fallback
         return _truthy(self._env("WAYBACK_FALLBACK"))
 
-    def _do_flaresolverr_fallback(self) -> bool:
-        """Opt-in (env ``<PREFIX>_FLARESOLVERR_FALLBACK``): when a fast direct
-        fetch is blocked (challenge / 403 / 503), escalate that one request to a
-        FlareSolverr solve — keeping the happy path on fast curl_cffi. Needs a
-        solver URL to be configured."""
-        if not self._fs_url():
-            return False
+    def _flaresolverr_fallback_flag(self) -> bool:
+        """The escalate-on-block opt-in (kwarg or ``<PREFIX>_FLARESOLVERR_FALLBACK``
+        env), independent of whether a solver URL is configured."""
         if self.flaresolverr_fallback is not None:
             return self.flaresolverr_fallback
         return _truthy(self._env("FLARESOLVERR_FALLBACK"))
+
+    def _do_flaresolverr_fallback(self) -> bool:
+        """Whether a blocked GET (challenge / 403 / 503) should escalate to a
+        one-off FlareSolverr solve — needs both the flag and a solver URL."""
+        return bool(self._fs_url()) and self._flaresolverr_fallback_flag()
 
     def _proxy_on_429(self) -> bool:
         """Opt-in (env ``<PREFIX>_PROXY_ON_429``): on a rate-limit, retry through

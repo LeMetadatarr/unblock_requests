@@ -118,3 +118,19 @@ def test_blocked_get_without_fallback_returns_block(monkeypatch):
     monkeypatch.setattr(s, "_via_curl", lambda *a, **k: blocked)
     r = s.get("http://t/")
     assert r.status_code == 403
+
+
+def test_fallback_flag_keeps_curl_cffi_mode(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("UNBLOCK_REQUESTS"):
+            monkeypatch.delenv(k, raising=False)
+    # URL alone -> forced flaresolverr mode (unchanged behavior)
+    assert CloudflareSession(flaresolverr_url="http://x:8191")._resolved_mode() == "flaresolverr"
+    # URL + fallback flag -> stays on the fast curl_cffi path (URL is escalation-only)
+    s = CloudflareSession(flaresolverr_url="http://x:8191", flaresolverr_fallback=True)
+    assert s._resolved_mode() == "curl_cffi"
+    assert s._do_flaresolverr_fallback() is True
+    # env-only equivalent
+    monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_URL", "http://x:8191")
+    monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_FALLBACK", "1")
+    assert CloudflareSession()._resolved_mode() == "curl_cffi"
