@@ -1,9 +1,9 @@
 # Advanced
 
-## Drop-in into code you don't own
+## Drop-in into code you do not own
 
-Anything typed for `requests.Session` accepts a `CloudflareSession` unchanged —
-that's the whole point of subclassing rather than wrapping:
+Anything typed for `requests.Session` accepts a `CloudflareSession` unchanged.
+That is the point of subclassing rather than wrapping:
 
 ```python
 def scrape(session: requests.Session, url: str) -> str:
@@ -20,11 +20,11 @@ import requests, unblock_requests
 requests.Session = unblock_requests.CloudflareSession   # nuclear option
 ```
 
-(Prefer passing the session explicitly; the patch is global.)
+Prefer passing the session explicitly. The patch above is global.
 
 ## Per-request and session-wide config
 
-Standard Session features work because they're inherited:
+Standard Session features work because `CloudflareSession` inherits them:
 
 ```python
 s = CloudflareSession()
@@ -35,17 +35,18 @@ s.get(url, params={"q": "x"}, timeout=20, cookies={"k": "v"})
 `params` are baked into the URL before the wayback/flaresolverr lookups, so
 query strings survive those modes too.
 
-## Challenge detection & the fallback contract
+## Challenge detection and the fallback contract
 
-`is_challenge(text)` flags a body as a Cloudflare interstitial. On a live **GET**:
+`is_challenge(text)` flags a body as a Cloudflare interstitial. On a live
+**GET**:
 
-- a detected challenge (or a 403/503 that *is* a challenge) is treated as a
-  failure → triggers the Wayback fallback if enabled, else raises `RuntimeError`;
-- an ordinary 4xx/5xx that is **not** a challenge is returned untouched (the
-  library never masks a genuine 404).
+- A detected challenge, or a 403/503 that is a challenge, is treated as a
+  failure. It triggers the Wayback fallback if enabled, or raises
+  `RuntimeError` otherwise.
+- An ordinary 4xx/5xx that is not a challenge is returned untouched. The
+  library never masks a genuine 404.
 
-Tune detection by subclassing and overriding `is_challenge` usage, or pre-check
-yourself:
+Pre-check the body yourself if you need finer control:
 
 ```python
 from unblock_requests import is_challenge
@@ -56,28 +57,29 @@ if is_challenge(r.text):
 
 ## Limitations of the synthesized modes
 
-`wayback` and `flaresolverr` return a **constructed** `requests.Response` (real
-object, real `.text/.content/.json()/.raise_for_status()`), but because the
-bytes didn't come through urllib3:
+`wayback` and `flaresolverr` return a constructed `requests.Response`. It is a
+real object with real `.text`, `.content`, `.json()`, and
+`.raise_for_status()`, but the bytes did not come through urllib3, so:
 
-- `stream=True`, response iteration, and custom `HTTPAdapter`/`mount()` do **not**
-  apply;
-- redirects/history aren't populated (FlareSolverr followed them in-browser; the
-  archive is a single capture);
-- cookies aren't persisted from these fetches.
+- `stream=True`, response iteration, and custom `HTTPAdapter`/`mount()` do not
+  apply.
+- Redirects and history are not populated. FlareSolverr followed them in
+  browser, and the archive is a single capture.
+- Cookies are not persisted from these fetches.
 
-`requests` and `curl_cffi` modes are native and have none of these caveats.
+The `requests` and `curl_cffi` modes are native and have none of these
+caveats.
 
 ## Timeouts
 
 - `curl_cffi`/`requests`: pass `timeout=` per request as usual.
 - `flaresolverr`: the browser solve budget is `flaresolverr_timeout_ms`
-  (default 60000); the HTTP POST to FlareSolverr waits `budget + 30s`.
-- `wayback`: archive.org calls use a 30s timeout.
+  (default 60000). The HTTP POST to FlareSolverr waits budget plus 30 seconds.
+- `wayback`: archive.org calls use a 30-second timeout.
 
 ## Driving the transports directly
 
-The fetch helpers are usable without a Session:
+The fetch helpers work without a Session:
 
 ```python
 from unblock_requests import wayback_html
@@ -86,8 +88,8 @@ html = wayback_html("https://www.progarchives.com/artist.asp?id=1")  # str | Non
 
 ## Per-consumer env namespaces
 
-When several libraries embed `unblock_requests`, give each its own env prefix so
-their config doesn't collide:
+When several libraries embed `unblock_requests`, give each its own env prefix
+so their configuration does not collide:
 
 ```python
 class _Transport(CloudflareSession):
@@ -95,3 +97,6 @@ class _Transport(CloudflareSession):
         super().__init__(env_prefix="PYPROGARCHIVES", **kw)
 # now PYPROGARCHIVES_FLARESOLVERR_URL etc. configure just this client
 ```
+
+---
+[← Composition](composition.md) · [Home](../README.md) · [API →](api.md)
