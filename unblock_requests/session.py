@@ -10,7 +10,7 @@ from requests.models import PreparedRequest, Response
 from requests.structures import CaseInsensitiveDict
 
 _WAYBACK_AVAILABLE_API = "http://archive.org/wayback/available"
-_VALID_MODES = {"requests", "curl_cffi", "wayback", "flaresolverr"}
+_VALID_MODES = {"requests", "curl_cffi", "wayback", "flaresolverr", "browserless"}
 
 _DEFAULT_HEADERS = {
     "User-Agent": (
@@ -31,6 +31,32 @@ def is_challenge(text: str) -> bool:
     head = (text or "")[:1500].lower()
     return ("just a moment" in head or "cf-mitigated" in head
             or "challenge-platform" in head or "cf_chl_opt" in head)
+
+
+_BLOCK_TITLE_MARKERS = (
+    "access denied", "403 forbidden", "403 - blocked", "error 403",
+    "you have been blocked", "request blocked", "attention required",
+    "verify you are human", "permission denied", "- 403",
+)
+
+
+def _page_title(text: str) -> str:
+    m = re.search(r"<title[^>]*>(.*?)</title>", text or "", re.I | re.S)
+    return (m.group(1) if m else "").strip().lower()
+
+
+def is_blocked(text: str) -> bool:
+    """Detect a soft block: an access-denied / "403"-style page served with a
+    normal HTTP 200 body (so neither raise_for_status nor is_challenge catch it).
+    Conservative — matches a block phrase in the <title>, or in the head of a
+    short body, to avoid false positives on real content."""
+    if not text:
+        return False
+    title = _page_title(text)
+    if any(m in title for m in _BLOCK_TITLE_MARKERS):
+        return True
+    head = text[:2000].lower()
+    return len(text) < 4000 and any(m in head for m in _BLOCK_TITLE_MARKERS)
 
 
 def _truthy(value: Optional[str]) -> bool:
@@ -119,12 +145,15 @@ class CloudflareSession(requests.Session):
 
     Args:
         mode:                    ``"requests"`` / ``"curl_cffi"`` / ``"wayback"``
-                                 / ``"flaresolverr"``. ``None`` → resolve from
+                                 / ``"flaresolverr"`` / ``"browserless"``. ``None`` → resolve from
                                  the environment, then auto (FlareSolverr if a
-                                 URL is configured, else curl_cffi).
+                                 URL is configured, browserless if a URL is set, else curl_cffi).
         flaresolverr_url:        FlareSolverr base URL (e.g.
                                  ``"http://localhost:8191"``).
         flaresolverr_timeout_ms: per-request solve budget (default 60000).
+        browserless_url:         Browserless base URL (e.g.
+                                 ``"http://localhost:3600"``).
+        browserless_timeout_ms:  per-request render timeout (default 60000).
         wayback_fallback:        fall back to the Wayback Machine when a live
                                  GET is blocked. ``None`` → read the env flag.
         flaresolverr_fallback:   keep the fast (curl_cffi) path, but escalate a
@@ -136,6 +165,8 @@ class CloudflareSession(requests.Session):
                                  ``"UNBLOCK_REQUESTS"``): ``<PREFIX>_TRANSPORT``,
                                  ``<PREFIX>_FLARESOLVERR_URL``,
                                  ``<PREFIX>_FLARESOLVERR_TIMEOUT``,
+                                 ``<PREFIX>_BROWSERLESS_URL``,
+                                 ``<PREFIX>_BROWSERLESS_TIMEOUT``,
                                  ``<PREFIX>_WAYBACK_FALLBACK``,
                                  ``<PREFIX>_FLARESOLVERR_FALLBACK``.
     """
@@ -143,6 +174,8 @@ class CloudflareSession(requests.Session):
     def __init__(self, *, mode: Optional[str] = None,
                  flaresolverr_url: Optional[str] = None,
                  flaresolverr_timeout_ms: Optional[int] = None,
+                 browserless_url: Optional[str] = None,
+                 browserless_timeout_ms: Optional[int] = None,
                  wayback_fallback: Optional[bool] = None,
                  flaresolverr_fallback: Optional[bool] = None,
                  impersonate: str = "chrome",
@@ -153,6 +186,8 @@ class CloudflareSession(requests.Session):
         self.cf_mode = mode.lower() if mode else None
         self.flaresolverr_url = flaresolverr_url
         self.flaresolverr_timeout_ms = flaresolverr_timeout_ms
+        self.browserless_url = browserless_url
+        self.browserless_timeout_ms = browserless_timeout_ms
         self.wayback_fallback = wayback_fallback
         self.flaresolverr_fallback = flaresolverr_fallback
         self.impersonate = impersonate
@@ -173,14 +208,27 @@ class CloudflareSession(requests.Session):
             return self.flaresolverr_timeout_ms
         return int(self._env("FLARESOLVERR_TIMEOUT") or "60000")
 
+    def _bl_url(self) -> str:
+        return self.browserless_url or self._env("BROWSERLESS_URL")
+
+    def _bl_timeout(self) -> int:
+        if self.browserless_timeout_ms is not None:
+            return self.browserless_timeout_ms
+        return int(self._env("BROWSERLESS_TIMEOUT") or "60000")
+
     def _resolved_mode(self) -> str:
         if self.cf_mode:
             return self.cf_mode
         env = self._env("TRANSPORT").lower()
         if env:
             return env
-        if self._fs_url():
+        # A solver URL normally selects flaresolverr mode — UNLESS the fallback
+        # flag is set, in which case the URL is escalation-only and the fast
+        # curl_cffi path stays the default.
+        if self._fs_url() and not self._flaresolverr_fallback_flag():
             return "flaresolverr"
+        if self._bl_url():
+            return "browserless"
         return "curl_cffi"
 
     def _do_wayback_fallback(self) -> bool:
@@ -188,16 +236,17 @@ class CloudflareSession(requests.Session):
             return self.wayback_fallback
         return _truthy(self._env("WAYBACK_FALLBACK"))
 
-    def _do_flaresolverr_fallback(self) -> bool:
-        """Opt-in (env ``<PREFIX>_FLARESOLVERR_FALLBACK``): when a fast direct
-        fetch is blocked (challenge / 403 / 503), escalate that one request to a
-        FlareSolverr solve — keeping the happy path on fast curl_cffi. Needs a
-        solver URL to be configured."""
-        if not self._fs_url():
-            return False
+    def _flaresolverr_fallback_flag(self) -> bool:
+        """The escalate-on-block opt-in (kwarg or ``<PREFIX>_FLARESOLVERR_FALLBACK``
+        env), independent of whether a solver URL is configured."""
         if self.flaresolverr_fallback is not None:
             return self.flaresolverr_fallback
         return _truthy(self._env("FLARESOLVERR_FALLBACK"))
+
+    def _do_flaresolverr_fallback(self) -> bool:
+        """Whether a blocked GET (challenge / 403 / 503) should escalate to a
+        one-off FlareSolverr solve — needs both the flag and a solver URL."""
+        return bool(self._fs_url()) and self._flaresolverr_fallback_flag()
 
     def _proxy_on_429(self) -> bool:
         """Opt-in (env ``<PREFIX>_PROXY_ON_429``): on a rate-limit, retry through
@@ -273,6 +322,18 @@ class CloudflareSession(requests.Session):
         html = _flaresolverr_extract(resp.json())
         return _make_response(url, content=html.encode("utf-8"))
 
+    def _via_browserless(self, url: str) -> Response:
+        endpoint = (self._bl_url() or "http://localhost:3600").rstrip("/")
+        timeout_ms = self._bl_timeout()
+        # "networkidle2" never settles on ad/CF-heavy pages and 408s; default to
+        # "load" (still runs the page JS). Override per env <PREFIX>_BROWSERLESS_WAIT
+        # (e.g. "domcontentloaded" / "networkidle0").
+        wait = self._env("BROWSERLESS_WAIT") or "load"
+        body = {"url": url, "gotoOptions": {"waitUntil": wait, "timeout": timeout_ms}}
+        resp = requests.post(f"{endpoint}/content", json=body, timeout=timeout_ms / 1000 + 30)
+        resp.raise_for_status()
+        return _make_response(url, content=resp.content)
+
     def _proxy_url(self, kwargs: dict) -> Optional[str]:
         """A single proxy URL from per-request ``proxies=`` or ``self.proxies``."""
         proxies = kwargs.get("proxies") or self.proxies or {}
@@ -300,6 +361,8 @@ class CloudflareSession(requests.Session):
         try:
             if mode == "flaresolverr" and is_get:
                 resp = self._via_flaresolverr(full, proxy=self._proxy_url(kwargs))
+            elif mode == "browserless" and is_get:
+                resp = self._via_browserless(full)
             elif mode == "curl_cffi":
                 try:
                     resp = self._via_curl(method, url, **kwargs)
@@ -311,15 +374,15 @@ class CloudflareSession(requests.Session):
             # (opt-in), keeping the happy path fast; a served challenge then
             # falls through to the Wayback fallback.
             if is_get and mode != "flaresolverr" \
-                    and (resp.status_code in (403, 503) or is_challenge(resp.text)):
+                    and (resp.status_code in (403, 503) or is_challenge(resp.text) or is_blocked(resp.text)):
                 if self._do_flaresolverr_fallback():
                     try:
                         solved = self._via_flaresolverr(full, proxy=self._proxy_url(kwargs))
-                        if not is_challenge(solved.text):
+                        if not is_challenge(solved.text) and not is_blocked(solved.text):
                             return solved
                     except Exception:
                         pass
-                if is_challenge(resp.text):
+                if is_challenge(resp.text) or is_blocked(resp.text):
                     raise RuntimeError("Cloudflare challenge served")
             # rate-limited → optionally retry through rotating proxies (opt-in)
             if resp.status_code == 429 and self._proxy_on_429():

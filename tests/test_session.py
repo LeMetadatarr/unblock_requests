@@ -3,7 +3,7 @@ import os
 
 import requests
 
-from unblock_requests import CloudflareSession, is_challenge, wayback_raw_url
+from unblock_requests import CloudflareSession, is_blocked, is_challenge, wayback_raw_url
 from unblock_requests.session import _full_url, _make_response, _url_variants, _flaresolverr_extract
 
 
@@ -14,11 +14,12 @@ def test_is_a_requests_session():
 
 
 def test_mode_resolution(monkeypatch):
-    for k in ("UNBLOCK_REQUESTS_TRANSPORT", "UNBLOCK_REQUESTS_FLARESOLVERR_URL", "UNBLOCK_REQUESTS_WAYBACK_FALLBACK"):
+    for k in ("UNBLOCK_REQUESTS_TRANSPORT", "UNBLOCK_REQUESTS_FLARESOLVERR_URL", "UNBLOCK_REQUESTS_BROWSERLESS_URL", "UNBLOCK_REQUESTS_WAYBACK_FALLBACK"):
         monkeypatch.delenv(k, raising=False)
     assert CloudflareSession()._resolved_mode() == "curl_cffi"
     assert CloudflareSession(mode="wayback")._resolved_mode() == "wayback"
     assert CloudflareSession(flaresolverr_url="http://x:8191")._resolved_mode() == "flaresolverr"
+    assert CloudflareSession(browserless_url="http://localhost:3600")._resolved_mode() == "browserless"
 
 
 def test_kwarg_beats_env(monkeypatch):
@@ -118,3 +119,70 @@ def test_blocked_get_without_fallback_returns_block(monkeypatch):
     monkeypatch.setattr(s, "_via_curl", lambda *a, **k: blocked)
     r = s.get("http://t/")
     assert r.status_code == 403
+
+
+def test_fallback_flag_keeps_curl_cffi_mode(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("UNBLOCK_REQUESTS"):
+            monkeypatch.delenv(k, raising=False)
+    # URL alone -> forced flaresolverr mode (unchanged behavior)
+    assert CloudflareSession(flaresolverr_url="http://x:8191")._resolved_mode() == "flaresolverr"
+    # URL + fallback flag -> stays on the fast curl_cffi path (URL is escalation-only)
+    s = CloudflareSession(flaresolverr_url="http://x:8191", flaresolverr_fallback=True)
+    assert s._resolved_mode() == "curl_cffi"
+    assert s._do_flaresolverr_fallback() is True
+    # env-only equivalent
+    monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_URL", "http://x:8191")
+    monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_FALLBACK", "1")
+    assert CloudflareSession()._resolved_mode() == "curl_cffi"
+
+
+def test_is_blocked_positive():
+    from unblock_requests import is_blocked
+    assert is_blocked("<html><head><title>The Vaults of Erowid : 403 - Blocked</title></head></html>")
+    assert is_blocked("<title>Access Denied</title><body>nope</body>")
+
+
+def test_is_blocked_negative():
+    from unblock_requests import is_blocked
+    assert not is_blocked("<html><head><title>Jennifer Aniston</title></head><body>" + ("real content "*500) + "</body></html>")
+    assert not is_blocked("")
+
+
+def test_softblock_200_escalates_to_flaresolverr(monkeypatch):
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi", flaresolverr_url="http://localhost:8191", flaresolverr_fallback=True)
+    blocked = S._make_response("http://t/", content=b"<title>403 - Blocked</title>", status=200)
+    good = S._make_response("http://t/", content=b"<html>the real page</html>", status=200)
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: blocked)
+    monkeypatch.setattr(s, "_via_flaresolverr", lambda url, proxy=None: good)
+    r = s.get("http://t/")
+    assert r.status_code == 200 and b"real page" in r.content
+
+
+def test_browserless_mode_resolution(monkeypatch):
+    for k in ("UNBLOCK_REQUESTS_TRANSPORT", "UNBLOCK_REQUESTS_BROWSERLESS_URL"):
+        monkeypatch.delenv(k, raising=False)
+    s = CloudflareSession(browserless_url="http://localhost:3600")
+    assert s._resolved_mode() == "browserless"
+
+
+def test_browserless_fetch(monkeypatch):
+    import json
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="browserless")
+
+    # Mock requests.post to return fake rendered HTML
+    def mock_post(url, json=None, timeout=None):
+        resp = requests.Response()
+        resp.status_code = 200
+        resp._content = b"<html>rendered</html>"
+        resp.url = url
+        resp.headers = {"Content-Type": "text/html"}
+        return resp
+
+    monkeypatch.setattr("requests.post", mock_post)
+    r = s.get("http://t/")
+    assert r.status_code == 200
+    assert b"rendered" in r.content
+    assert "rendered" in r.text
