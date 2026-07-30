@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0a3](https://github.com/TigreGotico/unblock_requests/tree/0.2.0a3) (2026-07-30)
+
+[Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.2.0a2...0.2.0a3)
+
+**Merged pull requests:**
+
+- docs: rewrite README in Simplified Technical English [\#12](https://github.com/TigreGotico/unblock_requests/pull/12) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [0.2.0a2](https://github.com/TigreGotico/unblock_requests/tree/0.2.0a2) (2026-05-30)
 
 [Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.2.0a1...0.2.0a2)
