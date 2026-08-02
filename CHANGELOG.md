@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0a5](https://github.com/LeMetadatarr/unblock_requests/tree/0.2.0a5) (2026-08-02)
+
+[Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a4...0.2.0a5)
+
+**Merged pull requests:**
+
+- deep: bugs, real-fixture tests, docs/examples [\#15](https://github.com/LeMetadatarr/unblock_requests/pull/15) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [0.2.0a4](https://github.com/LeMetadatarr/unblock_requests/tree/0.2.0a4) (2026-08-02)
 
 [Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a3...0.2.0a4)
