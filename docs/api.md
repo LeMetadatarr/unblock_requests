@@ -14,6 +14,7 @@ CloudflareSession(
     browserless_url: str | None = None,
     browserless_timeout_ms: int | None = None,
     wayback_fallback: bool | None = None,
+    flaresolverr_fallback: bool | None = None,
     impersonate: str = "chrome",
     env_prefix: str = "UNBLOCK_REQUESTS",
 )
@@ -32,6 +33,7 @@ inherited: `.headers`, `.params`, `.cookies`, `.mount`,
 | `browserless_url` | `None` | Browserless base URL. Setting it auto-selects `browserless` mode. |
 | `browserless_timeout_ms` | `None` (60000) | Per-request render timeout. |
 | `wayback_fallback` | `None` | On a blocked live GET, fall back to the Wayback Machine. `None` reads the env flag. |
+| `flaresolverr_fallback` | `None` | Keep the fast `curl_cffi` path, but escalate a blocked GET (challenge / 403 / 503) to a one-off FlareSolverr solve. Needs `flaresolverr_url`. `None` reads the env flag. |
 | `impersonate` | `"chrome"` | curl_cffi browser target. |
 | `env_prefix` | `"UNBLOCK_REQUESTS"` | Namespace for env fallbacks. |
 
@@ -54,8 +56,12 @@ An invalid `mode` raises `ValueError`.
 | `<PREFIX>_TRANSPORT` | `mode` |
 | `<PREFIX>_FLARESOLVERR_URL` | `flaresolverr_url` |
 | `<PREFIX>_FLARESOLVERR_TIMEOUT` | `flaresolverr_timeout_ms` (ms) |
+| `<PREFIX>_FLARESOLVERR_FALLBACK` | `flaresolverr_fallback` (`1/true/yes/on`) |
 | `<PREFIX>_BROWSERLESS_URL` | `browserless_url` |
+| `<PREFIX>_BROWSERLESS_TIMEOUT` | `browserless_timeout_ms` (ms) |
 | `<PREFIX>_WAYBACK_FALLBACK` | `wayback_fallback` (`1/true/yes/on`) |
+| `<PREFIX>_PROXY_ON_429` | retry through rotating proxies (`anon_requests`) on HTTP 429 (`1/true/yes/on`) |
+| `<PREFIX>_PROXY_RETRIES` | rotated IPs to try on a 429 retry (default 5) |
 
 ### What `request()` returns
 
