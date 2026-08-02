@@ -1,28 +1,36 @@
 # Changelog
 
-## [0.2.0a3](https://github.com/TigreGotico/unblock_requests/tree/0.2.0a3) (2026-07-30)
+## [0.2.0a4](https://github.com/LeMetadatarr/unblock_requests/tree/0.2.0a4) (2026-08-02)
 
-[Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.2.0a2...0.2.0a3)
-
-**Merged pull requests:**
-
-- docs: rewrite README in Simplified Technical English [\#12](https://github.com/TigreGotico/unblock_requests/pull/12) ([JarbasAl](https://github.com/JarbasAl))
-
-## [0.2.0a2](https://github.com/TigreGotico/unblock_requests/tree/0.2.0a2) (2026-05-30)
-
-[Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.2.0a1...0.2.0a2)
+[Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a3...0.2.0a4)
 
 **Merged pull requests:**
 
-- Add browserless transport mode [\#10](https://github.com/TigreGotico/unblock_requests/pull/10) ([JarbasAl](https://github.com/JarbasAl))
+- docs: QA pass — accuracy, org-move URLs, related projects [\#14](https://github.com/LeMetadatarr/unblock_requests/pull/14) ([JarbasAl](https://github.com/JarbasAl))
 
-## [0.2.0a1](https://github.com/TigreGotico/unblock_requests/tree/0.2.0a1) (2026-05-30)
+## [0.2.0a3](https://github.com/LeMetadatarr/unblock_requests/tree/0.2.0a3) (2026-07-30)
 
-[Full Changelog](https://github.com/TigreGotico/unblock_requests/compare/0.1.0...0.2.0a1)
+[Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a2...0.2.0a3)
 
 **Merged pull requests:**
 
-- feat: is\_blocked\(\) soft-block detection + keep curl\_cffi on fallback [\#8](https://github.com/TigreGotico/unblock_requests/pull/8) ([JarbasAl](https://github.com/JarbasAl))
+- docs: rewrite README in Simplified Technical English [\#12](https://github.com/LeMetadatarr/unblock_requests/pull/12) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.2.0a2](https://github.com/LeMetadatarr/unblock_requests/tree/0.2.0a2) (2026-05-30)
+
+[Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a1...0.2.0a2)
+
+**Merged pull requests:**
+
+- Add browserless transport mode [\#10](https://github.com/LeMetadatarr/unblock_requests/pull/10) ([JarbasAl](https://github.com/JarbasAl))
+
+## [0.2.0a1](https://github.com/LeMetadatarr/unblock_requests/tree/0.2.0a1) (2026-05-30)
+
+[Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.1.0...0.2.0a1)
+
+**Merged pull requests:**
+
+- feat: is\_blocked\(\) soft-block detection + keep curl\_cffi on fallback [\#8](https://github.com/LeMetadatarr/unblock_requests/pull/8) ([JarbasAl](https://github.com/JarbasAl))
 
 
 
