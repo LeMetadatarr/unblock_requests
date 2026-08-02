@@ -1,6 +1,6 @@
 # Composing with anon_requests (rotation + bypass)
 
-`unblock_requests` and [`anon_requests`](https://github.com/TigreGotico/anon_requests)
+`unblock_requests` and [`anon_requests`](https://github.com/LeMetadatarr/anon_requests)
 solve orthogonal problems:
 
 | | Concern | Pattern |

@@ -2,7 +2,7 @@
 
 A **drop-in `requests.Session` subclass** that gets your request through
 Cloudflare. It is the anti-bot counterpart to
-[`anon_requests`](https://github.com/TigreGotico/anon_requests), which handles
+[`anon_requests`](https://github.com/LeMetadatarr/anon_requests), which handles
 IP anonymity through proxy or Tor rotation. `unblock_requests` handles *bot
 detection*, meaning TLS fingerprinting and JS challenges, and falls back to the
 archive when a live fetch fails.
@@ -51,8 +51,8 @@ Cloudflare challenge or an HTTP 403/503, to a one-off solve. If that also
 fails, it falls back to Wayback:
 
 ```bash
-export PYDISCOGS_FLARESOLVERR_URL=http://host:8191    # solver to escalate to
-export PYDISCOGS_FLARESOLVERR_FALLBACK=1              # opt-in; default mode stays curl_cffi
+export UNBLOCK_REQUESTS_FLARESOLVERR_URL=http://host:8191    # solver to escalate to
+export UNBLOCK_REQUESTS_FLARESOLVERR_FALLBACK=1               # opt-in; default mode stays curl_cffi
 ```
 
 ```python
@@ -114,7 +114,7 @@ pip install unblock_requests[anon]      # adds anon_requests (proxy-on-429)
 
 ## Related projects
 
-- [`anon_requests`](https://github.com/TigreGotico/anon_requests): IP
+- [`anon_requests`](https://github.com/LeMetadatarr/anon_requests): IP
   rotation through proxy pools and Tor, meant to compose with this library.
 
 ## Notes / limits
