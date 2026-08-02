@@ -37,21 +37,24 @@ query strings survive those modes too.
 
 ## Challenge detection and the fallback contract
 
-`is_challenge(text)` flags a body as a Cloudflare interstitial. On a live
-**GET**:
+`is_challenge(text)` flags a body as a Cloudflare interstitial. `is_blocked(text)`
+flags a *soft* block — an access-denied / "403"-style page served with a
+normal HTTP 200, so neither `raise_for_status()` nor `is_challenge()` catch
+it — by looking for block phrases in the `<title>` or the head of a short
+body. On a live **GET**:
 
-- A detected challenge, or a 403/503 that is a challenge, is treated as a
-  failure. It triggers the Wayback fallback if enabled, or raises
-  `RuntimeError` otherwise.
-- An ordinary 4xx/5xx that is not a challenge is returned untouched. The
-  library never masks a genuine 404.
+- A detected challenge or soft block, or a 403/503 that is one of those, is
+  treated as a failure. It triggers the FlareSolverr escalation and/or the
+  Wayback fallback if enabled, or raises `RuntimeError` otherwise.
+- An ordinary 4xx/5xx that is neither a challenge nor a soft block is
+  returned untouched. The library never masks a genuine 404.
 
 Pre-check the body yourself if you need finer control:
 
 ```python
-from unblock_requests import is_challenge
+from unblock_requests import is_blocked, is_challenge
 r = s.get(url)
-if is_challenge(r.text):
+if is_challenge(r.text) or is_blocked(r.text):
     ...   # decide what to do
 ```
 
