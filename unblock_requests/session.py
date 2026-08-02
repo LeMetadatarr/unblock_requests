@@ -98,11 +98,19 @@ def _make_response(url: str, *, content: bytes, status: int = 200,
     r.url = url
     r.reason = reason
     r.headers = CaseInsensitiveDict(headers or {"Content-Type": "text/html; charset=utf-8"})
-    # Mirror requests' own Session.send(): derive .encoding from the
-    # Content-Type header (falling back to chardet-based apparent_encoding
-    # via .text when the header carries no charset), instead of forcing
-    # utf-8 and mangling pages served in another encoding.
-    r.encoding = get_encoding_from_headers(r.headers)
+    # Mirror requests' own Session.send(): only trust an *explicitly declared*
+    # charset from the Content-Type header. get_encoding_from_headers() falls
+    # back to ISO-8859-1 for any text/* response with no charset param (per
+    # RFC 2616 §3.7.1) — that default is wrong for the modern web, where
+    # Cloudflare-fronted sites routinely serve UTF-8 with no charset in the
+    # header. Leaving .encoding as None makes requests' Response.text property
+    # fall back to chardet-based apparent_encoding instead of mojibake-ing
+    # every undeclared-charset UTF-8 page as Latin-1.
+    content_type = r.headers.get("Content-Type", "")
+    if "charset=" in content_type.lower():
+        r.encoding = get_encoding_from_headers(r.headers)
+    else:
+        r.encoding = None
     if request is not None:
         r.request = request
     return r

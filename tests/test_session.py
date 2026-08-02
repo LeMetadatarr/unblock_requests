@@ -181,16 +181,19 @@ def test_browserless_mode_resolution(monkeypatch):
 def test_make_response_derives_encoding_from_headers():
     # Recorded live via a bounded GET to
     # http://info.cern.ch/hypertext/WWW/TheProject.html (first website ever
-    # published; served without a charset in its Content-Type). Real
-    # ``requests.get()`` against the same URL reports ``.encoding ==
-    # "ISO-8859-1"`` (HTTP's legacy default for text/* with no charset) —
-    # bug: this repo used to hardcode ``r.encoding = "utf-8"`` in
-    # ``_make_response``, silently diverging from genuine requests/curl_cffi
-    # decoding and risking mojibake on any page not explicitly utf-8.
+    # published; served without a charset in its Content-Type). Bug history:
+    # this repo used to hardcode ``r.encoding = "utf-8"`` in ``_make_response``
+    # (mangling non-utf-8 pages), then a later "fix" derived .encoding
+    # unconditionally from get_encoding_from_headers() — which defaults
+    # undeclared text/* to ISO-8859-1 per RFC 2616 §3.7.1, mojibake-ing any
+    # modern UTF-8 page served without a charset (exactly what
+    # Cloudflare-fronted sites do). Correct behavior: no declared charset ->
+    # leave .encoding as None and let Response.text fall back to
+    # chardet-based apparent_encoding, same as genuine requests/curl_cffi.
     raw = (FIXTURES / "info_cern_ch.html").read_bytes()
     r = _make_response("http://info.cern.ch/hypertext/WWW/TheProject.html",
                        content=raw, headers={"Content-Type": "text/html"})
-    assert r.encoding == "ISO-8859-1"
+    assert r.encoding is None
     assert "World Wide Web" in r.text
 
 
@@ -201,10 +204,26 @@ def test_make_response_keeps_declared_charset():
     assert r.text == "café"
 
 
+def test_make_response_undeclared_charset_utf8_decodes_correctly():
+    # Regression for the encoding-fix regression itself: a text/html response
+    # with NO charset in its Content-Type, but a real UTF-8 body containing
+    # multibyte characters. get_encoding_from_headers() alone would return
+    # "ISO-8859-1" for this (no charset param -> RFC default), which decodes
+    # multibyte UTF-8 sequences as mojibake. ``_make_response`` must instead
+    # leave .encoding as None so .text falls back to apparent_encoding
+    # (chardet), which correctly detects UTF-8 from the bytes themselves.
+    body = "Café — 中文".encode("utf-8")
+    r = _make_response("https://example.com/", content=body,
+                       headers={"Content-Type": "text/html"})
+    assert r.encoding is None
+    assert r.text == "Café — 中文"
+
+
 def test_via_curl_response_respects_real_content_type(monkeypatch):
     # Regression for the same encoding bug, exercised through the curl_cffi
     # transport path (the default mode): the Content-Type coming back from
-    # curl_cffi must drive decoding, not a hardcoded utf-8.
+    # curl_cffi must drive decoding, not a hardcoded utf-8, and an undeclared
+    # charset must not be forced to ISO-8859-1 either.
     class FakeCurlResponse:
         def __init__(self):
             self.url = "http://info.cern.ch/hypertext/WWW/TheProject.html"
@@ -221,7 +240,7 @@ def test_via_curl_response_respects_real_content_type(monkeypatch):
     monkeypatch.setattr(s, "_curl_session", lambda: FakeCurlSession())
     r = s.get("http://info.cern.ch/hypertext/WWW/TheProject.html")
     assert r.status_code == 200
-    assert r.encoding == "ISO-8859-1"
+    assert r.encoding is None
     assert "World Wide Web" in r.text
 
 
