@@ -103,12 +103,22 @@ used to trigger the optional fallback, and is exposed for your own checks.
 Converts `.../web/<ts>/<orig>` to `.../web/<ts>id_/<orig>`, giving raw bytes
 with no toolbar or link rewriting.
 
+### `is_blocked(text) -> bool`
+
+A heuristic check for a *soft* block: an access-denied / "403"-style page
+served with a normal HTTP 200 (so neither `raise_for_status()` nor
+`is_challenge()` catch it). It looks for phrases such as `"access denied"`,
+`"you have been blocked"`, or `"verify you are human"` in the `<title>`, or
+in the head of a short body — conservative, to avoid false positives on real
+content. Used alongside `is_challenge()` to trigger the optional FlareSolverr
+fallback, and exposed for your own checks.
+
 ## Exports
 
 ```python
 from unblock_requests import (
     CloudflareSession, Session,        # Session is an alias
-    wayback_html, is_challenge, wayback_raw_url,
+    wayback_html, is_challenge, is_blocked, wayback_raw_url,
     __version__,
 )
 ```

@@ -1,10 +1,23 @@
 """Offline tests for CloudflareSession (no network)."""
 import os
+from pathlib import Path
 
 import requests
 
-from unblock_requests import CloudflareSession, is_blocked, is_challenge, wayback_raw_url
-from unblock_requests.session import _full_url, _make_response, _url_variants, _flaresolverr_extract
+from unblock_requests import (
+    CloudflareSession,
+    is_blocked,
+    is_challenge,
+    wayback_raw_url,
+)
+from unblock_requests.session import (
+    _flaresolverr_extract,
+    _full_url,
+    _make_response,
+    _url_variants,
+)
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_is_a_requests_session():
@@ -138,13 +151,11 @@ def test_fallback_flag_keeps_curl_cffi_mode(monkeypatch):
 
 
 def test_is_blocked_positive():
-    from unblock_requests import is_blocked
     assert is_blocked("<html><head><title>The Vaults of Erowid : 403 - Blocked</title></head></html>")
     assert is_blocked("<title>Access Denied</title><body>nope</body>")
 
 
 def test_is_blocked_negative():
-    from unblock_requests import is_blocked
     assert not is_blocked("<html><head><title>Jennifer Aniston</title></head><body>" + ("real content "*500) + "</body></html>")
     assert not is_blocked("")
 
@@ -167,9 +178,106 @@ def test_browserless_mode_resolution(monkeypatch):
     assert s._resolved_mode() == "browserless"
 
 
-def test_browserless_fetch(monkeypatch):
-    import json
+def test_make_response_derives_encoding_from_headers():
+    # Recorded live via a bounded GET to
+    # http://info.cern.ch/hypertext/WWW/TheProject.html (first website ever
+    # published; served without a charset in its Content-Type). Bug history:
+    # this repo used to hardcode ``r.encoding = "utf-8"`` in ``_make_response``
+    # (mangling non-utf-8 pages), then a later "fix" derived .encoding
+    # unconditionally from get_encoding_from_headers() — which defaults
+    # undeclared text/* to ISO-8859-1 per RFC 2616 §3.7.1, mojibake-ing any
+    # modern UTF-8 page served without a charset (exactly what
+    # Cloudflare-fronted sites do). Correct behavior: no declared charset ->
+    # leave .encoding as None and let Response.text fall back to
+    # chardet-based apparent_encoding, same as genuine requests/curl_cffi.
+    raw = (FIXTURES / "info_cern_ch.html").read_bytes()
+    r = _make_response("http://info.cern.ch/hypertext/WWW/TheProject.html",
+                       content=raw, headers={"Content-Type": "text/html"})
+    assert r.encoding is None
+    assert "World Wide Web" in r.text
+
+
+def test_make_response_keeps_declared_charset():
+    r = _make_response("https://x/y", content="café".encode("latin-1"),
+                       headers={"Content-Type": "text/html; charset=latin-1"})
+    assert r.encoding.lower() == "latin-1"
+    assert r.text == "café"
+
+
+def test_make_response_undeclared_charset_utf8_decodes_correctly():
+    # Regression for the encoding-fix regression itself: a text/html response
+    # with NO charset in its Content-Type, but a real UTF-8 body containing
+    # multibyte characters. get_encoding_from_headers() alone would return
+    # "ISO-8859-1" for this (no charset param -> RFC default), which decodes
+    # multibyte UTF-8 sequences as mojibake. ``_make_response`` must instead
+    # leave .encoding as None so .text falls back to apparent_encoding
+    # (chardet), which correctly detects UTF-8 from the bytes themselves.
+    body = "Café — 中文".encode("utf-8")
+    r = _make_response("https://example.com/", content=body,
+                       headers={"Content-Type": "text/html"})
+    assert r.encoding is None
+    assert r.text == "Café — 中文"
+
+
+def test_via_curl_response_respects_real_content_type(monkeypatch):
+    # Regression for the same encoding bug, exercised through the curl_cffi
+    # transport path (the default mode): the Content-Type coming back from
+    # curl_cffi must drive decoding, not a hardcoded utf-8, and an undeclared
+    # charset must not be forced to ISO-8859-1 either.
+    class FakeCurlResponse:
+        def __init__(self):
+            self.url = "http://info.cern.ch/hypertext/WWW/TheProject.html"
+            self.content = (FIXTURES / "info_cern_ch.html").read_bytes()
+            self.status_code = 200
+            self.headers = {"Content-Type": "text/html"}
+            self.reason = "OK"
+
+    class FakeCurlSession:
+        def request(self, method, url, **kwargs):
+            return FakeCurlResponse()
+
+    s = CloudflareSession(mode="curl_cffi")
+    monkeypatch.setattr(s, "_curl_session", lambda: FakeCurlSession())
+    r = s.get("http://info.cern.ch/hypertext/WWW/TheProject.html")
+    assert r.status_code == 200
+    assert r.encoding is None
+    assert "World Wide Web" in r.text
+
+
+def test_close_closes_curl_cffi_session():
+    # Bug: CloudflareSession lazily opens a curl_cffi Session (a separate
+    # native curl handle) but never closed it — Session.close() only closes
+    # the plain-requests adapters, leaking the curl handle on every
+    # curl_cffi-mode session that gets discarded.
+    s = CloudflareSession(mode="curl_cffi")
+    closed = []
+    s._curl = type("FakeCurl", (), {"close": lambda self: closed.append(True)})()
+    s.close()
+    assert closed == [True]
+    assert s._curl is None
+
+
+def test_close_is_a_noop_when_curl_never_used():
+    s = CloudflareSession(mode="wayback")
+    s.close()  # must not raise even though _curl was never created
+
+
+def test_real_403_without_block_markers_is_returned_as_is(monkeypatch):
+    # Recorded live via a bounded GET to https://httpbin.org/status/403
+    # (empty body, plain 403). No title/marker text, so is_blocked() must
+    # stay False and the response is returned unmodified — this is the
+    # "genuine 403, not a Cloudflare soft-block" case.
     from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi")
+    real_403 = S._make_response("https://httpbin.org/status/403", content=b"",
+                                status=403, headers={"Content-Type": "text/html; charset=utf-8"})
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: real_403)
+    r = s.get("https://httpbin.org/status/403")
+    assert r.status_code == 403
+    assert not is_blocked(r.text)
+
+
+def test_browserless_fetch(monkeypatch):
     s = CloudflareSession(mode="browserless")
 
     # Mock requests.post to return fake rendered HTML

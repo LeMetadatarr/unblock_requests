@@ -123,6 +123,8 @@ pip install unblock_requests[anon]      # adds anon_requests (proxy-on-429)
   the fetched HTML. It is a real `requests.Response`, but `stream=`, adapters,
   and connection pooling do not apply. The `requests`/`curl_cffi` modes are
   native.
-- Challenge detection is heuristic (`is_challenge()`), used to trigger the
-  optional Wayback fallback on blocked GETs.
-- `wayback_html(url)` and `is_challenge(text)` are exposed for direct use.
+- Challenge detection is heuristic (`is_challenge()` for the interstitial,
+  `is_blocked()` for a soft-block page served with HTTP 200), used to
+  trigger the optional Wayback/FlareSolverr fallbacks on blocked GETs.
+- `wayback_html(url)`, `is_challenge(text)`, and `is_blocked(text)` are
+  exposed for direct use.

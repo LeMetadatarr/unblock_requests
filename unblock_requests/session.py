@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import os
 import re
-from typing import Any, Optional
+from typing import Any
 
 import requests
 from requests.models import PreparedRequest, Response
 from requests.structures import CaseInsensitiveDict
+from requests.utils import get_encoding_from_headers
 
 _WAYBACK_AVAILABLE_API = "http://archive.org/wayback/available"
 _VALID_MODES = {"requests", "curl_cffi", "wayback", "flaresolverr", "browserless"}
@@ -41,7 +42,7 @@ _BLOCK_TITLE_MARKERS = (
 
 
 def _page_title(text: str) -> str:
-    m = re.search(r"<title[^>]*>(.*?)</title>", text or "", re.I | re.S)
+    m = re.search(r"<title[^>]*>(.*?)</title>", text or "", re.IGNORECASE | re.DOTALL)
     return (m.group(1) if m else "").strip().lower()
 
 
@@ -59,7 +60,7 @@ def is_blocked(text: str) -> bool:
     return len(text) < 4000 and any(m in head for m in _BLOCK_TITLE_MARKERS)
 
 
-def _truthy(value: Optional[str]) -> bool:
+def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
 
@@ -88,23 +89,35 @@ def _url_variants(url: str):
 
 
 def _make_response(url: str, *, content: bytes, status: int = 200,
-                   headers: Optional[dict] = None, reason: str = "OK",
-                   request: Optional[PreparedRequest] = None) -> Response:
+                   headers: dict | None = None, reason: str = "OK",
+                   request: PreparedRequest | None = None) -> Response:
     """Build a genuine :class:`requests.Response` from raw bytes."""
     r = Response()
     r.status_code = status
     r._content = content
     r.url = url
     r.reason = reason
-    r.encoding = "utf-8"
     r.headers = CaseInsensitiveDict(headers or {"Content-Type": "text/html; charset=utf-8"})
+    # Mirror requests' own Session.send(): only trust an *explicitly declared*
+    # charset from the Content-Type header. get_encoding_from_headers() falls
+    # back to ISO-8859-1 for any text/* response with no charset param (per
+    # RFC 2616 §3.7.1) — that default is wrong for the modern web, where
+    # Cloudflare-fronted sites routinely serve UTF-8 with no charset in the
+    # header. Leaving .encoding as None makes requests' Response.text property
+    # fall back to chardet-based apparent_encoding instead of mojibake-ing
+    # every undeclared-charset UTF-8 page as Latin-1.
+    content_type = r.headers.get("Content-Type", "")
+    if "charset=" in content_type.lower():
+        r.encoding = get_encoding_from_headers(r.headers)
+    else:
+        r.encoding = None
     if request is not None:
         r.request = request
     return r
 
 
 def wayback_html(url: str, *, timeout: float = 30.0,
-                 headers: Optional[dict] = None) -> Optional[str]:
+                 headers: dict | None = None) -> str | None:
     """Return the latest Wayback Machine snapshot of *url* as raw HTML, or
     ``None`` if the archive has no usable capture. archive.org is not
     Cloudflare-gated, so plain ``requests`` is used."""
@@ -171,13 +184,13 @@ class CloudflareSession(requests.Session):
                                  ``<PREFIX>_FLARESOLVERR_FALLBACK``.
     """
 
-    def __init__(self, *, mode: Optional[str] = None,
-                 flaresolverr_url: Optional[str] = None,
-                 flaresolverr_timeout_ms: Optional[int] = None,
-                 browserless_url: Optional[str] = None,
-                 browserless_timeout_ms: Optional[int] = None,
-                 wayback_fallback: Optional[bool] = None,
-                 flaresolverr_fallback: Optional[bool] = None,
+    def __init__(self, *, mode: str | None = None,
+                 flaresolverr_url: str | None = None,
+                 flaresolverr_timeout_ms: int | None = None,
+                 browserless_url: str | None = None,
+                 browserless_timeout_ms: int | None = None,
+                 wayback_fallback: bool | None = None,
+                 flaresolverr_fallback: bool | None = None,
                  impersonate: str = "chrome",
                  env_prefix: str = "UNBLOCK_REQUESTS") -> None:
         super().__init__()
@@ -194,6 +207,15 @@ class CloudflareSession(requests.Session):
         self.env_prefix = env_prefix
         self.headers.update(_DEFAULT_HEADERS)
         self._curl: Any = None
+
+    def close(self) -> None:
+        """Close the underlying ``requests`` adapters *and* the lazily-created
+        curl_cffi session (a separate native curl handle that ``Session.close()``
+        does not know about and would otherwise leak)."""
+        if self._curl is not None:
+            self._curl.close()
+            self._curl = None
+        super().close()
 
     # -- config resolution (explicit kwarg > env > default) ----------------
 
@@ -253,7 +275,7 @@ class CloudflareSession(requests.Session):
         rotating proxies via anon_requests."""
         return _truthy(self._env("PROXY_ON_429"))
 
-    def _via_proxies(self, method: str, url: str, **kwargs) -> Optional[Response]:
+    def _via_proxies(self, method: str, url: str, **kwargs) -> Response | None:
         """Retry a rate-limited request through rotating proxies (anon_requests).
 
         Each attempt rotates the source IP. Returns the first non-429 response,
@@ -262,7 +284,7 @@ class CloudflareSession(requests.Session):
         proxies (no recursion back into CloudflareSession).
         """
         try:
-            from anon_requests import RotatingProxySession, ProxyType
+            from anon_requests import ProxyType, RotatingProxySession
         except ImportError:
             return None
         import requests as _rq
@@ -309,7 +331,7 @@ class CloudflareSession(requests.Session):
             getattr(cr, "url", url), content=cr.content, status=cr.status_code,
             headers=dict(cr.headers), reason=getattr(cr, "reason", "") or "OK")
 
-    def _via_flaresolverr(self, url: str, proxy: Optional[str] = None) -> Response:
+    def _via_flaresolverr(self, url: str, proxy: str | None = None) -> Response:
         endpoint = (self._fs_url() or "http://localhost:8191").rstrip("/")
         timeout_ms = self._fs_timeout()
         payload = {"cmd": "request.get", "url": url, "maxTimeout": timeout_ms}
@@ -334,12 +356,12 @@ class CloudflareSession(requests.Session):
         resp.raise_for_status()
         return _make_response(url, content=resp.content)
 
-    def _proxy_url(self, kwargs: dict) -> Optional[str]:
+    def _proxy_url(self, kwargs: dict) -> str | None:
         """A single proxy URL from per-request ``proxies=`` or ``self.proxies``."""
         proxies = kwargs.get("proxies") or self.proxies or {}
         return proxies.get("https") or proxies.get("http") or next(iter(proxies.values()), None)
 
-    def _via_wayback(self, url: str) -> Optional[Response]:
+    def _via_wayback(self, url: str) -> Response | None:
         html = wayback_html(url, headers=dict(self.headers))
         if html is None:
             return None
