@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.0a6](https://github.com/LeMetadatarr/unblock_requests/tree/0.2.0a6) (2026-08-03)
+
+[Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a5...0.2.0a6)
+
+**Merged pull requests:**
+
+- ci: grant conventional-label workflow write permissions [\#16](https://github.com/LeMetadatarr/unblock_requests/pull/16) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [0.2.0a5](https://github.com/LeMetadatarr/unblock_requests/tree/0.2.0a5) (2026-08-02)
 
 [Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a4...0.2.0a5)
