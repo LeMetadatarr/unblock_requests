@@ -1,17 +1,54 @@
 """The ``CloudflareSession`` drop-in and its transport helpers."""
 from __future__ import annotations
 
+import ipaddress
 import os
 import re
+import socket
+from urllib.parse import urlsplit
 from typing import Any
 
 import requests
+from requests.adapters import HTTPAdapter
+from urllib3.connection import HTTPConnection
 from requests.models import PreparedRequest, Response
 from requests.structures import CaseInsensitiveDict
 from requests.utils import get_encoding_from_headers
 
 _WAYBACK_AVAILABLE_API = "http://archive.org/wayback/available"
 _VALID_MODES = {"requests", "curl_cffi", "wayback", "flaresolverr", "browserless"}
+
+_DIRECT_MODES = {"requests", "curl_cffi"}
+
+# A socket bound to one family's wildcard address cannot connect over the other,
+# so urllib3 skips every address of the wrong family while resolving.
+_SOURCE_ADDRESSES = {"ipv4": ("0.0.0.0", 0), "ipv6": ("::", 0)}
+
+
+class _FamilyAdapter(HTTPAdapter):
+    """``HTTPAdapter`` whose connections use one IP family only."""
+
+    __attrs__ = HTTPAdapter.__attrs__ + ["_source_address"]
+
+    def __init__(self, family: str, *args: Any, **kwargs: Any) -> None:
+        self._source_address = _SOURCE_ADDRESSES[family]
+        super().__init__(*args, **kwargs)
+
+    def init_poolmanager(self, *args: Any, **pool_kwargs: Any) -> None:
+        pool_kwargs["source_address"] = self._source_address
+        if self._source_address[0] == "::":
+            # keep a v4-mapped literal (::ffff:a.b.c.d) from reaching IPv4
+            pool_kwargs["socket_options"] = HTTPConnection.default_socket_options + [
+                (socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)]
+        super().init_poolmanager(*args, **pool_kwargs)
+
+    def proxy_manager_for(self, proxy: str, **proxy_kwargs: Any) -> Any:
+        proxy_kwargs["source_address"] = self._source_address
+        if self._source_address[0] == "::":
+            proxy_kwargs["socket_options"] = HTTPConnection.default_socket_options + [
+                (socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)]
+        return super().proxy_manager_for(proxy, **proxy_kwargs)
+
 
 _DEFAULT_HEADERS = {
     "User-Agent": (
@@ -174,6 +211,20 @@ class CloudflareSession(requests.Session):
                                  FlareSolverr solve. Needs ``flaresolverr_url``.
                                  ``None`` → read the env flag.
         impersonate:             curl_cffi browser target (default ``"chrome"``).
+        curl_options:            ``{CurlOpt: value}`` passed to the curl_cffi
+                                 session this object creates.
+        ip_family:               ``"ipv4"`` / ``"ipv6"`` / ``None``. Restricts
+                                 every connection of this session to one IP
+                                 family: curl's IP resolve option in curl_cffi
+                                 mode, a source-address adapter in requests
+                                 mode. A pinned session never leaves the family,
+                                 so the Wayback, FlareSolverr and proxy
+                                 fallbacks are off and the ``wayback``,
+                                 ``flaresolverr`` and ``browserless`` modes are
+                                 refused. The connection is bound to the family's
+                                 wildcard address, so a literal IP of the other
+                                 family fails in either mode, redirects included;
+                                 only http(s) redirects are followed.
         env_prefix:              namespace for the env fallbacks (default
                                  ``"UNBLOCK_REQUESTS"``): ``<PREFIX>_TRANSPORT``,
                                  ``<PREFIX>_FLARESOLVERR_URL``,
@@ -192,10 +243,22 @@ class CloudflareSession(requests.Session):
                  wayback_fallback: bool | None = None,
                  flaresolverr_fallback: bool | None = None,
                  impersonate: str = "chrome",
-                 env_prefix: str = "UNBLOCK_REQUESTS") -> None:
+                 env_prefix: str = "UNBLOCK_REQUESTS",
+                 curl_options: dict | None = None,
+                 ip_family: str | None = None) -> None:
         super().__init__()
         if mode is not None and mode.lower() not in _VALID_MODES:
             raise ValueError(f"mode must be one of {sorted(_VALID_MODES)} or None, got {mode!r}")
+        if ip_family is not None and ip_family not in _SOURCE_ADDRESSES:
+            raise ValueError(f"ip_family must be 'ipv4', 'ipv6' or None, got {ip_family!r}")
+        if ip_family and mode and mode.lower() not in _DIRECT_MODES:
+            raise ValueError(f"ip_family cannot be combined with mode {mode!r}")
+        self.ip_family = ip_family
+        self.curl_options = dict(curl_options) if curl_options else None
+        if ip_family:
+            adapter = _FamilyAdapter(ip_family)
+            self.mount("https://", adapter)
+            self.mount("http://", adapter)
         self.cf_mode = mode.lower() if mode else None
         self.flaresolverr_url = flaresolverr_url
         self.flaresolverr_timeout_ms = flaresolverr_timeout_ms
@@ -243,7 +306,11 @@ class CloudflareSession(requests.Session):
             return self.cf_mode
         env = self._env("TRANSPORT").lower()
         if env:
+            if self.ip_family and env not in _DIRECT_MODES:
+                raise ValueError(f"ip_family cannot be combined with transport {env!r}")
             return env
+        if self.ip_family:
+            return "curl_cffi"
         # A solver URL normally selects flaresolverr mode — UNLESS the fallback
         # flag is set, in which case the URL is escalation-only and the fast
         # curl_cffi path stays the default.
@@ -254,6 +321,8 @@ class CloudflareSession(requests.Session):
         return "curl_cffi"
 
     def _do_wayback_fallback(self) -> bool:
+        if self.ip_family:
+            return False
         if self.wayback_fallback is not None:
             return self.wayback_fallback
         return _truthy(self._env("WAYBACK_FALLBACK"))
@@ -268,11 +337,15 @@ class CloudflareSession(requests.Session):
     def _do_flaresolverr_fallback(self) -> bool:
         """Whether a blocked GET (challenge / 403 / 503) should escalate to a
         one-off FlareSolverr solve — needs both the flag and a solver URL."""
+        if self.ip_family:
+            return False
         return bool(self._fs_url()) and self._flaresolverr_fallback_flag()
 
     def _proxy_on_429(self) -> bool:
         """Opt-in (env ``<PREFIX>_PROXY_ON_429``): on a rate-limit, retry through
         rotating proxies via anon_requests."""
+        if self.ip_family:
+            return False
         return _truthy(self._env("PROXY_ON_429"))
 
     def _via_proxies(self, method: str, url: str, **kwargs) -> Response | None:
@@ -318,11 +391,39 @@ class CloudflareSession(requests.Session):
     def _curl_session(self):
         if self._curl is None:
             from curl_cffi import requests as cffi  # type: ignore[import]
-            self._curl = cffi.Session(impersonate=self.impersonate)
+            options = dict(self.curl_options or {})
+            if self.ip_family:
+                from curl_cffi.const import CurlIpResolve, CurlOpt  # type: ignore[import]
+                v4 = self.ip_family == "ipv4"
+                # Name resolution is restricted by IPRESOLVE; the local bind makes
+                # the kernel refuse any connection of the other family, whatever
+                # form the target address is written in (decimal, hex, mapped...),
+                # including redirect targets. http(s) only, as for any redirect.
+                options[CurlOpt.IPRESOLVE] = CurlIpResolve.V4 if v4 else CurlIpResolve.V6
+                options[CurlOpt.INTERFACE] = "host!0.0.0.0" if v4 else "host!::"
+                options[CurlOpt.PROTOCOLS_STR] = "http,https"
+                options[CurlOpt.REDIR_PROTOCOLS_STR] = "http,https"
+            self._curl = cffi.Session(impersonate=self.impersonate,
+                                      **({"curl_options": options} if options else {}))
             self._curl.headers.update(self.headers)
         return self._curl
 
+    def _refuse_mapped_literal(self, url: str) -> None:
+        """libcurl cannot make an IPv6 socket v6-only, so a v4-mapped literal
+        (``::ffff:a.b.c.d``) in the request URL is refused here. Redirect targets
+        are followed by libcurl and are not checked."""
+        if self.ip_family != "ipv6":
+            return
+        try:
+            ip = ipaddress.ip_address((urlsplit(url).hostname or "").split("%")[0])
+        except ValueError:
+            return
+        if ip.version == 6 and ip.ipv4_mapped is not None:
+            raise requests.ConnectionError(
+                f"{url} is an IPv4-mapped address; this session is pinned to ipv6")
+
     def _via_curl(self, method: str, url: str, **kwargs) -> Response:
+        self._refuse_mapped_literal(url)
         allowed = {"params", "data", "json", "headers", "cookies", "timeout",
                    "allow_redirects", "proxies"}
         cr = self._curl_session().request(

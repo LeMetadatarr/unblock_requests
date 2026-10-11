@@ -12,7 +12,7 @@ dependencies = ["requests>=2.28"]
 [project.optional-dependencies]
 stealth = ["curl-cffi"]
 anon = ["anon_requests"]
-test = ["pytest"]
+test = ["pytest", "curl-cffi"]
 
 [tool.setuptools.packages.find]
 where = ["."]
