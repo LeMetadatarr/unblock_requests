@@ -22,12 +22,14 @@ keeps working unchanged::
     assert isinstance(s, requests.Session)                        # True
 
 Modes (``mode=`` kwarg, or the ``<PREFIX>_TRANSPORT`` env var):
-``"requests"`` / ``"curl_cffi"`` / ``"wayback"`` / ``"flaresolverr"``.
-Explicit kwargs always win over the environment. Setting ``flaresolverr_url``
-(kwarg or ``<PREFIX>_FLARESOLVERR_URL``) selects FlareSolverr automatically.
+``"requests"`` / ``"curl_cffi"`` / ``"wayback"`` / ``"flaresolverr"`` /
+``"browserless"``. Explicit kwargs always win over the environment. Setting
+``flaresolverr_url`` (kwarg or ``<PREFIX>_FLARESOLVERR_URL``) selects
+FlareSolverr automatically.
 """
 from unblock_requests.session import (
     CloudflareSession,
+    is_blocked,
     is_challenge,
     wayback_html,
     wayback_raw_url,
@@ -40,8 +42,9 @@ Session = CloudflareSession
 __all__ = [
     "CloudflareSession",
     "Session",
+    "__version__",
+    "is_blocked",
     "is_challenge",
     "wayback_html",
     "wayback_raw_url",
-    "__version__",
 ]
