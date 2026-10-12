@@ -17,6 +17,8 @@ CloudflareSession(
     flaresolverr_fallback: bool | None = None,
     impersonate: str = "chrome",
     env_prefix: str = "UNBLOCK_REQUESTS",
+    curl_options: dict | None = None,
+    ip_family: str | None = None,
 )
 ```
 
@@ -36,6 +38,8 @@ inherited: `.headers`, `.params`, `.cookies`, `.mount`,
 | `flaresolverr_fallback` | `None` | Keep the fast `curl_cffi` path, but escalate a blocked GET (challenge / 403 / 503) to a one-off FlareSolverr solve. Needs `flaresolverr_url`. `None` reads the env flag. |
 | `impersonate` | `"chrome"` | curl_cffi browser target. |
 | `env_prefix` | `"UNBLOCK_REQUESTS"` | Namespace for env fallbacks. |
+| `curl_options` | `None` | `{CurlOpt: value}` passed to the curl_cffi session the object creates. |
+| `ip_family` | `None` | `"ipv4"` or `"ipv6"` restricts every connection of the session to that family (curl's IP resolve option in `curl_cffi` mode, a source-address adapter in `requests` mode). A pinned session never leaves the family, so the Wayback, FlareSolverr and proxy fallbacks are off, and the `wayback`, `flaresolverr` and `browserless` modes raise `ValueError`. In `curl_cffi` mode the connection is bound to the family's wildcard address (`CURLOPT_INTERFACE` `host!0.0.0.0` / `host!::`), so the kernel refuses a target of the other family however its literal is written (decimal, hex, short or mapped forms) and also for redirects; only `http` and `https` are accepted, redirects included. Redirects are followed by libcurl as for an unpinned session. One gap: libcurl cannot make an IPv6 socket v6-only, so on an `ipv6` pin a v4-mapped literal (`::ffff:a.b.c.d`) as a redirect target can reach IPv4; a mapped literal in the request URL itself is refused. In `requests` mode the adapter binds the same way and sets `IPV6_V6ONLY` on IPv6 sockets. |
 
 ### Mode resolution (explicit, then env, then auto)
 
