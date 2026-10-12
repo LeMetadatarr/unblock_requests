@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.0a1](https://github.com/LeMetadatarr/unblock_requests/tree/0.3.0a1) (2026-10-12)
+
+[Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a6...0.3.0a1)
+
+**Merged pull requests:**
+
+- feat: curl options and IP family for CloudflareSession [\#17](https://github.com/LeMetadatarr/unblock_requests/pull/17) ([JarbasAl](https://github.com/JarbasAl))
+
 ## [0.2.0a6](https://github.com/LeMetadatarr/unblock_requests/tree/0.2.0a6) (2026-08-03)
 
 [Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a5...0.2.0a6)
