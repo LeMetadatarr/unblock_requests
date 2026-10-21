@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.1a1](https://github.com/LeMetadatarr/unblock_requests/tree/0.3.1a1) (2026-10-21)
+
+[Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.3.0a1...0.3.1a1)
+
+**Merged pull requests:**
+
+- fix: a made response streams and closes without a raw body [\#19](https://github.com/LeMetadatarr/unblock_requests/pull/19) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [0.3.0a1](https://github.com/LeMetadatarr/unblock_requests/tree/0.3.0a1) (2026-10-12)
 
 [Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.2.0a6...0.3.0a1)
