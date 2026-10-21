@@ -132,6 +132,7 @@ def _make_response(url: str, *, content: bytes, status: int = 200,
     r = Response()
     r.status_code = status
     r._content = content
+    r._content_consumed = True     # the body is in memory: iter_content and close never touch raw
     r.url = url
     r.reason = reason
     r.headers = CaseInsensitiveDict(headers or {"Content-Type": "text/html; charset=utf-8"})
