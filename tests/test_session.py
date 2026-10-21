@@ -302,3 +302,51 @@ def test_made_response_streams_and_closes_like_a_read_response():
     with r:
         assert b"".join(r.iter_content(65536)) == b"a" * 70000
     assert list(r.iter_lines()) == [b"a" * 70000]
+
+
+def test_a_short_json_reply_that_mentions_access_denied_is_a_reply_not_a_block(monkeypatch):
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi")
+    reply = S._make_response("http://t/api", content=b'{"title": "Access denied (film)"}',
+                             headers={"Content-Type": "application/json"})
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: reply)
+    assert s.get("http://t/api").json() == {"title": "Access denied (film)"}
+
+
+def test_a_json_outage_keeps_its_status_and_is_not_sent_to_the_solver(monkeypatch):
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi", flaresolverr_url="http://x:8191", flaresolverr_fallback=True)
+    outage = S._make_response("http://t/api", content=b'{"error": "maintenance"}', status=503,
+                              headers={"Content-Type": "application/json"})
+    solves = []
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: outage)
+    monkeypatch.setattr(s, "_via_flaresolverr", lambda url, proxy=None: solves.append(url))
+    assert s.get("http://t/api").status_code == 503
+    assert solves == []
+
+
+def test_a_streamed_reply_in_requests_mode_is_not_read_before_the_caller_reads_it():
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Big(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            body = b"x" * 5_000_000
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Big)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        s = CloudflareSession(mode="requests")
+        with s.get(f"http://127.0.0.1:{server.server_address[1]}/", stream=True) as r:
+            assert r.raw.tell() == 0
+            assert len(next(r.iter_content(1024))) == 1024
+    finally:
+        server.shutdown()
