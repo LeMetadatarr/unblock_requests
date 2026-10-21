@@ -294,3 +294,11 @@ def test_browserless_fetch(monkeypatch):
     assert r.status_code == 200
     assert b"rendered" in r.content
     assert "rendered" in r.text
+
+
+def test_made_response_streams_and_closes_like_a_read_response():
+    # a POST through curl_cffi is never inspected, so nothing reads .content before the caller does
+    r = _make_response("https://x/y", content=b"a" * 70000)
+    with r:
+        assert b"".join(r.iter_content(65536)) == b"a" * 70000
+    assert list(r.iter_lines()) == [b"a" * 70000]
