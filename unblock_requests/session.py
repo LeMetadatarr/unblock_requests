@@ -97,6 +97,22 @@ def is_blocked(text: str) -> bool:
     return len(text) < 4000 and any(m in head for m in _BLOCK_TITLE_MARKERS)
 
 
+def _html(resp: Response) -> bool:
+    """An HTML reply, or one with no content type: the only kind a block page comes as."""
+    content_type = resp.headers.get("Content-Type", "").lower()
+    return not content_type or "html" in content_type
+
+
+def _block_page(resp: Response) -> bool:
+    """A challenge or block page instead of the reply. A streamed body that the
+    caller has not read is judged by its headers alone, so it is never read here."""
+    if resp.headers.get("cf-mitigated", "").lower() == "challenge":
+        return True
+    if not _html(resp) or (resp.raw is not None and not resp._content_consumed):
+        return False
+    return is_challenge(resp.text) or is_blocked(resp.text)
+
+
 def _truthy(value: str | None) -> bool:
     return (value or "").strip().lower() in {"1", "true", "yes", "on"}
 
@@ -494,11 +510,13 @@ class CloudflareSession(requests.Session):
                     resp = super().request(method, url, **kwargs)  # curl_cffi absent
             else:
                 resp = super().request(method, url, **kwargs)
-            # a blocked GET (challenge / 403 / 503) can escalate to the solver
-            # (opt-in), keeping the happy path fast; a served challenge then
-            # falls through to the Wayback fallback.
+            # a blocked GET (a challenge, or an HTML 403 / 503) can escalate to the
+            # solver (opt-in), keeping the happy path fast; a served challenge then
+            # falls through to the Wayback fallback. A JSON 403 / 503 is a real
+            # reply of the service, so it keeps its status.
+            blocked = is_get and mode != "flaresolverr" and _block_page(resp)
             if is_get and mode != "flaresolverr" \
-                    and (resp.status_code in (403, 503) or is_challenge(resp.text) or is_blocked(resp.text)):
+                    and (blocked or (resp.status_code in (403, 503) and _html(resp))):
                 if self._do_flaresolverr_fallback():
                     try:
                         solved = self._via_flaresolverr(full, proxy=self._proxy_url(kwargs))
@@ -506,7 +524,7 @@ class CloudflareSession(requests.Session):
                             return solved
                     except Exception:
                         pass
-                if is_challenge(resp.text) or is_blocked(resp.text):
+                if blocked:
                     raise RuntimeError("Cloudflare challenge served")
             # rate-limited → optionally retry through rotating proxies (opt-in)
             if resp.status_code == 429 and self._proxy_on_429():
