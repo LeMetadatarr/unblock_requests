@@ -1,10 +1,23 @@
 """Offline tests for CloudflareSession (no network)."""
 import os
+from pathlib import Path
 
 import requests
 
-from unblock_requests import CloudflareSession, is_challenge, wayback_raw_url
-from unblock_requests.session import _full_url, _make_response, _url_variants, _flaresolverr_extract
+from unblock_requests import (
+    CloudflareSession,
+    is_blocked,
+    is_challenge,
+    wayback_raw_url,
+)
+from unblock_requests.session import (
+    _flaresolverr_extract,
+    _full_url,
+    _make_response,
+    _url_variants,
+)
+
+FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def test_is_a_requests_session():
@@ -14,11 +27,12 @@ def test_is_a_requests_session():
 
 
 def test_mode_resolution(monkeypatch):
-    for k in ("UNBLOCK_REQUESTS_TRANSPORT", "UNBLOCK_REQUESTS_FLARESOLVERR_URL", "UNBLOCK_REQUESTS_WAYBACK_FALLBACK"):
+    for k in ("UNBLOCK_REQUESTS_TRANSPORT", "UNBLOCK_REQUESTS_FLARESOLVERR_URL", "UNBLOCK_REQUESTS_BROWSERLESS_URL", "UNBLOCK_REQUESTS_WAYBACK_FALLBACK"):
         monkeypatch.delenv(k, raising=False)
     assert CloudflareSession()._resolved_mode() == "curl_cffi"
     assert CloudflareSession(mode="wayback")._resolved_mode() == "wayback"
     assert CloudflareSession(flaresolverr_url="http://x:8191")._resolved_mode() == "flaresolverr"
+    assert CloudflareSession(browserless_url="http://localhost:3600")._resolved_mode() == "browserless"
 
 
 def test_kwarg_beats_env(monkeypatch):
@@ -118,3 +132,221 @@ def test_blocked_get_without_fallback_returns_block(monkeypatch):
     monkeypatch.setattr(s, "_via_curl", lambda *a, **k: blocked)
     r = s.get("http://t/")
     assert r.status_code == 403
+
+
+def test_fallback_flag_keeps_curl_cffi_mode(monkeypatch):
+    for k in list(os.environ):
+        if k.startswith("UNBLOCK_REQUESTS"):
+            monkeypatch.delenv(k, raising=False)
+    # URL alone -> forced flaresolverr mode (unchanged behavior)
+    assert CloudflareSession(flaresolverr_url="http://x:8191")._resolved_mode() == "flaresolverr"
+    # URL + fallback flag -> stays on the fast curl_cffi path (URL is escalation-only)
+    s = CloudflareSession(flaresolverr_url="http://x:8191", flaresolverr_fallback=True)
+    assert s._resolved_mode() == "curl_cffi"
+    assert s._do_flaresolverr_fallback() is True
+    # env-only equivalent
+    monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_URL", "http://x:8191")
+    monkeypatch.setenv("UNBLOCK_REQUESTS_FLARESOLVERR_FALLBACK", "1")
+    assert CloudflareSession()._resolved_mode() == "curl_cffi"
+
+
+def test_is_blocked_positive():
+    assert is_blocked("<html><head><title>The Vaults of Erowid : 403 - Blocked</title></head></html>")
+    assert is_blocked("<title>Access Denied</title><body>nope</body>")
+
+
+def test_is_blocked_negative():
+    assert not is_blocked("<html><head><title>Jennifer Aniston</title></head><body>" + ("real content "*500) + "</body></html>")
+    assert not is_blocked("")
+
+
+def test_softblock_200_escalates_to_flaresolverr(monkeypatch):
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi", flaresolverr_url="http://localhost:8191", flaresolverr_fallback=True)
+    blocked = S._make_response("http://t/", content=b"<title>403 - Blocked</title>", status=200)
+    good = S._make_response("http://t/", content=b"<html>the real page</html>", status=200)
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: blocked)
+    monkeypatch.setattr(s, "_via_flaresolverr", lambda url, proxy=None: good)
+    r = s.get("http://t/")
+    assert r.status_code == 200 and b"real page" in r.content
+
+
+def test_browserless_mode_resolution(monkeypatch):
+    for k in ("UNBLOCK_REQUESTS_TRANSPORT", "UNBLOCK_REQUESTS_BROWSERLESS_URL"):
+        monkeypatch.delenv(k, raising=False)
+    s = CloudflareSession(browserless_url="http://localhost:3600")
+    assert s._resolved_mode() == "browserless"
+
+
+def test_make_response_derives_encoding_from_headers():
+    # Recorded live via a bounded GET to
+    # http://info.cern.ch/hypertext/WWW/TheProject.html (first website ever
+    # published; served without a charset in its Content-Type). Bug history:
+    # this repo used to hardcode ``r.encoding = "utf-8"`` in ``_make_response``
+    # (mangling non-utf-8 pages), then a later "fix" derived .encoding
+    # unconditionally from get_encoding_from_headers() — which defaults
+    # undeclared text/* to ISO-8859-1 per RFC 2616 §3.7.1, mojibake-ing any
+    # modern UTF-8 page served without a charset (exactly what
+    # Cloudflare-fronted sites do). Correct behavior: no declared charset ->
+    # leave .encoding as None and let Response.text fall back to
+    # chardet-based apparent_encoding, same as genuine requests/curl_cffi.
+    raw = (FIXTURES / "info_cern_ch.html").read_bytes()
+    r = _make_response("http://info.cern.ch/hypertext/WWW/TheProject.html",
+                       content=raw, headers={"Content-Type": "text/html"})
+    assert r.encoding is None
+    assert "World Wide Web" in r.text
+
+
+def test_make_response_keeps_declared_charset():
+    r = _make_response("https://x/y", content="café".encode("latin-1"),
+                       headers={"Content-Type": "text/html; charset=latin-1"})
+    assert r.encoding.lower() == "latin-1"
+    assert r.text == "café"
+
+
+def test_make_response_undeclared_charset_utf8_decodes_correctly():
+    # Regression for the encoding-fix regression itself: a text/html response
+    # with NO charset in its Content-Type, but a real UTF-8 body containing
+    # multibyte characters. get_encoding_from_headers() alone would return
+    # "ISO-8859-1" for this (no charset param -> RFC default), which decodes
+    # multibyte UTF-8 sequences as mojibake. ``_make_response`` must instead
+    # leave .encoding as None so .text falls back to apparent_encoding
+    # (chardet), which correctly detects UTF-8 from the bytes themselves.
+    body = "Café — 中文".encode("utf-8")
+    r = _make_response("https://example.com/", content=body,
+                       headers={"Content-Type": "text/html"})
+    assert r.encoding is None
+    assert r.text == "Café — 中文"
+
+
+def test_via_curl_response_respects_real_content_type(monkeypatch):
+    # Regression for the same encoding bug, exercised through the curl_cffi
+    # transport path (the default mode): the Content-Type coming back from
+    # curl_cffi must drive decoding, not a hardcoded utf-8, and an undeclared
+    # charset must not be forced to ISO-8859-1 either.
+    class FakeCurlResponse:
+        def __init__(self):
+            self.url = "http://info.cern.ch/hypertext/WWW/TheProject.html"
+            self.content = (FIXTURES / "info_cern_ch.html").read_bytes()
+            self.status_code = 200
+            self.headers = {"Content-Type": "text/html"}
+            self.reason = "OK"
+
+    class FakeCurlSession:
+        def request(self, method, url, **kwargs):
+            return FakeCurlResponse()
+
+    s = CloudflareSession(mode="curl_cffi")
+    monkeypatch.setattr(s, "_curl_session", lambda: FakeCurlSession())
+    r = s.get("http://info.cern.ch/hypertext/WWW/TheProject.html")
+    assert r.status_code == 200
+    assert r.encoding is None
+    assert "World Wide Web" in r.text
+
+
+def test_close_closes_curl_cffi_session():
+    # Bug: CloudflareSession lazily opens a curl_cffi Session (a separate
+    # native curl handle) but never closed it — Session.close() only closes
+    # the plain-requests adapters, leaking the curl handle on every
+    # curl_cffi-mode session that gets discarded.
+    s = CloudflareSession(mode="curl_cffi")
+    closed = []
+    s._curl = type("FakeCurl", (), {"close": lambda self: closed.append(True)})()
+    s.close()
+    assert closed == [True]
+    assert s._curl is None
+
+
+def test_close_is_a_noop_when_curl_never_used():
+    s = CloudflareSession(mode="wayback")
+    s.close()  # must not raise even though _curl was never created
+
+
+def test_real_403_without_block_markers_is_returned_as_is(monkeypatch):
+    # Recorded live via a bounded GET to https://httpbin.org/status/403
+    # (empty body, plain 403). No title/marker text, so is_blocked() must
+    # stay False and the response is returned unmodified — this is the
+    # "genuine 403, not a Cloudflare soft-block" case.
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi")
+    real_403 = S._make_response("https://httpbin.org/status/403", content=b"",
+                                status=403, headers={"Content-Type": "text/html; charset=utf-8"})
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: real_403)
+    r = s.get("https://httpbin.org/status/403")
+    assert r.status_code == 403
+    assert not is_blocked(r.text)
+
+
+def test_browserless_fetch(monkeypatch):
+    s = CloudflareSession(mode="browserless")
+
+    # Mock requests.post to return fake rendered HTML
+    def mock_post(url, json=None, timeout=None):
+        resp = requests.Response()
+        resp.status_code = 200
+        resp._content = b"<html>rendered</html>"
+        resp.url = url
+        resp.headers = {"Content-Type": "text/html"}
+        return resp
+
+    monkeypatch.setattr("requests.post", mock_post)
+    r = s.get("http://t/")
+    assert r.status_code == 200
+    assert b"rendered" in r.content
+    assert "rendered" in r.text
+
+
+def test_made_response_streams_and_closes_like_a_read_response():
+    # a POST through curl_cffi is never inspected, so nothing reads .content before the caller does
+    r = _make_response("https://x/y", content=b"a" * 70000)
+    with r:
+        assert b"".join(r.iter_content(65536)) == b"a" * 70000
+    assert list(r.iter_lines()) == [b"a" * 70000]
+
+
+def test_a_short_json_reply_that_mentions_access_denied_is_a_reply_not_a_block(monkeypatch):
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi")
+    reply = S._make_response("http://t/api", content=b'{"title": "Access denied (film)"}',
+                             headers={"Content-Type": "application/json"})
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: reply)
+    assert s.get("http://t/api").json() == {"title": "Access denied (film)"}
+
+
+def test_a_json_outage_keeps_its_status_and_is_not_sent_to_the_solver(monkeypatch):
+    from unblock_requests import session as S
+    s = CloudflareSession(mode="curl_cffi", flaresolverr_url="http://x:8191", flaresolverr_fallback=True)
+    outage = S._make_response("http://t/api", content=b'{"error": "maintenance"}', status=503,
+                              headers={"Content-Type": "application/json"})
+    solves = []
+    monkeypatch.setattr(s, "_via_curl", lambda *a, **k: outage)
+    monkeypatch.setattr(s, "_via_flaresolverr", lambda url, proxy=None: solves.append(url))
+    assert s.get("http://t/api").status_code == 503
+    assert solves == []
+
+
+def test_a_streamed_reply_in_requests_mode_is_not_read_before_the_caller_reads_it():
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    class Big(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            body = b"x" * 5_000_000
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Big)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        s = CloudflareSession(mode="requests")
+        with s.get(f"http://127.0.0.1:{server.server_address[1]}/", stream=True) as r:
+            assert r.raw.tell() == 0
+            assert len(next(r.iter_content(1024))) == 1024
+    finally:
+        server.shutdown()
