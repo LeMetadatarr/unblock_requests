@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.3.2a1](https://github.com/LeMetadatarr/unblock_requests/tree/0.3.2a1) (2026-10-22)
+
+[Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.3.1a1...0.3.2a1)
+
+**Merged pull requests:**
+
+- fix: only an HTML reply is a block page, and a streamed body stays unread [\#21](https://github.com/LeMetadatarr/unblock_requests/pull/21) ([openvoiceos-bot](https://github.com/openvoiceos-bot))
+
 ## [0.3.1a1](https://github.com/LeMetadatarr/unblock_requests/tree/0.3.1a1) (2026-10-21)
 
 [Full Changelog](https://github.com/LeMetadatarr/unblock_requests/compare/0.3.0a1...0.3.1a1)
